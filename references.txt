@@ -1,0 +1,3 @@
+https://pypi.org/project/deepbots/
+
+https://github.com/aidudezzz/deepbots-tutorials
