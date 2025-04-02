@@ -71,4 +71,4 @@ while robot.step(timestep) != -1:
             joints[joint_index].setPosition(new_position)
 
     # Debugging: print current joint positions
-    print("Joint positions:", joint_positions)
+    #print("Joint positions:", joint_positions)
