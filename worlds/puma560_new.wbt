@@ -1,0 +1,67 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/unimation/puma/protos/Puma560.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/solids/protos/SolidTorus.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/balls/protos/Ball.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/toys/protos/RubberDuck.proto"
+
+WorldInfo {
+  info [
+    "Puma 560 Robot"
+    "Thanks to Andy Park (ARTLAB, Purdue University)"
+  ]
+  title "Unimate Puma 560"
+  ERP 0.4
+  basicTimeStep 20
+}
+Viewpoint {
+  orientation 0.09240819756568959 -0.4952653994467416 0.8638130058835188 4.364819125128989
+  position 10.145520168666504 16.368686802710933 9.816433935789656
+}
+TexturedBackground {
+  texture "noon_park_empty"
+}
+TexturedBackgroundLight {
+  texture "morning_cloudy_empty"
+  luminosity 3
+}
+RectangleArena {
+  translation 0 -2.15 0
+  floorSize 20 20
+  floorAppearance Parquetry {
+    type "light strip"
+  }
+  wallHeight 3
+}
+RubberDuck {
+  translation 1.22 3.46 0.16
+  scale 6
+  bodyColor 0.862745 0.541176 0.866667
+}
+Ball {
+  translation 1.01 0.28 1.2025
+  radius 0.12
+}
+SolidTorus {
+  translation 6.35 1.21 1
+  rotation -1 0 0 -5.307179586466759e-06
+  majorRadius 0.45
+  minorRadius 0.016
+  appearance PBRAppearance {
+    baseColor 0.752941 0.380392 0.796078
+    baseColorMap ImageTexture {
+      url [
+        ""
+      ]
+    }
+    roughness 0.5
+    metalness 0
+  }
+}
+Puma560 {
+  translation 0 0.62 0
+}
