@@ -8,6 +8,7 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/balls/protos/Ball.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/toys/protos/RubberDuck.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/devices/robotiq/protos/Robotiq3fGripper.proto"
 
 WorldInfo {
   info [
@@ -19,8 +20,8 @@ WorldInfo {
   basicTimeStep 20
 }
 Viewpoint {
-  orientation -0.11936520095098291 0.298515162649492 0.9469111080087079 0.7991554101404843
-  position -5.438275924411326 -3.5497763010885266 1.7895180502043249
+  orientation 0.1834564956651441 0.9068665882418203 -0.379389912002027 0.9797179472838027
+  position -1.3479192635015862 1.181594226030883 2.2122741217619732
 }
 TexturedBackground {
   texture "noon_park_empty"
@@ -42,8 +43,9 @@ RubberDuck {
   scale 6
   bodyColor 0.862745 0.541176 0.866667
 }
-Ball {
-  translation 1.01 0.28 1.2025
+DEF ball Ball {
+  translation -0.08 1.25676 0.950224
+  rotation 1 0 0 0.261799
   radius 0.12
 }
 SolidTorus {
@@ -63,6 +65,12 @@ SolidTorus {
   }
 }
 Puma560 {
+  hidden translation_6 -4.218066729233527e-10 -4.8647974537630034e-11 -0.08000091006476961
   translation 0 0.62 0
-  controller "<extern>"
+  controller "keyboard_controller"
+  supervisor TRUE
+  gripperSlot [
+    Robotiq3fGripper {
+    }
+  ]
 }
