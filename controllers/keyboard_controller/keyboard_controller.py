@@ -18,8 +18,13 @@ Use the following keys to control each joint:
 - Joint 4:  R (increase) / F (decrease)
 - Joint 5:  T (increase) / G (decrease)
 
-Press the corresponding keys to move the robotic arm.
-Joint positions will be displayed in the console.
+Robotiq3f Gripper Control:
+------------------------
+- Finger 1:     U (close) / J (open)
+- Finger 2:     I (close) / K (open)
+- Middle Finger: O (close) / L (open)
+
+Check the console to see current joint and finger motor positions.
 """)
 
 # Define joints and their limits
@@ -44,15 +49,38 @@ joint_limits = [
 # Initialize joint positions
 joint_positions = [0] * len(joints)
 
+# Define Robotiq motors
+finger_motors = {
+    "finger_1_joint_1": robot.getDevice("finger_1_joint_1"),
+    "finger_2_joint_1": robot.getDevice("finger_2_joint_1"),
+    "finger_middle_joint_1": robot.getDevice("finger_middle_joint_1")
+}
+
+finger_positions = {
+    "finger_1_joint_1": 0.0,
+    "finger_2_joint_1": 0.0,
+    "finger_middle_joint_1": 0.0
+}
+
+finger_limits = {
+    "finger_1_joint_1": (0.0, 1.2),
+    "finger_2_joint_1": (0.0, 1.2),
+    "finger_middle_joint_1": (0.0, 1.2)
+}
+
+
 # Define key bindings for movement
 key_bindings = {
-    'Q': (0, 0.05), 'A': (0, -0.05),
-    'W': (1, 0.05), 'S': (1, -0.05),
-    'E': (2, 0.05), 'D': (2, -0.05),
-    'R': (3, 0.05), 'F': (3, -0.05),
-    'T': (4, 0.05), 'G': (4, -0.05)
-    #'Y': (5, 0.05), 'H': (5, -0.05)
+    'Q': ("puma", 0, 0.05), 'A': ("puma", 0, -0.05),
+    'W': ("puma", 1, 0.05), 'S': ("puma", 1, -0.05),
+    'E': ("puma", 2, 0.05), 'D': ("puma", 2, -0.05),
+    'R': ("puma", 3, 0.05), 'F': ("puma", 3, -0.05),
+    'T': ("puma", 4, 0.05), 'G': ("puma", 4, -0.05),
+    'U': ("gripper", "finger_1_joint_1", 0.05), 'J': ("gripper", "finger_1_joint_1", -0.05),
+    'I': ("gripper", "finger_2_joint_1", 0.05), 'K': ("gripper", "finger_2_joint_1", -0.05),
+    'O': ("gripper", "finger_middle_joint_1", 0.05), 'L': ("gripper", "finger_middle_joint_1", -0.05)
 }
+
 
 while robot.step(timestep) != -1:
     key = keyboard.getKey()
@@ -61,14 +89,25 @@ while robot.step(timestep) != -1:
 
     key_char = chr(key).upper()
     if key_char in key_bindings:
-        joint_index, delta = key_bindings[key_char]
-        min_limit, max_limit = joint_limits[joint_index]
+        control_type, index_or_name, delta = key_bindings[key_char]
 
-        # Update position while respecting limits
-        new_position = joint_positions[joint_index] + delta
-        if min_limit is None or max_limit is None or (min_limit <= new_position <= max_limit):
-            joint_positions[joint_index] = new_position
-            joints[joint_index].setPosition(new_position)
+        if control_type == "puma":
+            min_limit, max_limit = joint_limits[index_or_name]
+            new_pos = joint_positions[index_or_name] + delta
+            if min_limit <= new_pos <= max_limit:
+                joint_positions[index_or_name] = new_pos
+                joints[index_or_name].setPosition(new_pos)
+
+        elif control_type == "gripper":
+            min_limit, max_limit = finger_limits[index_or_name]
+            new_pos = finger_positions[index_or_name] + delta
+            if min_limit <= new_pos <= max_limit:
+                finger_positions[index_or_name] = new_pos
+                finger_motors[index_or_name].setPosition(new_pos)
+
+    print("Joint positions:", joint_positions)
+    print("Gripper positions:", finger_positions)
+
 
     # Debugging: print current joint positions
     #print("Joint positions:", joint_positions)

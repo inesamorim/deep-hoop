@@ -3,5 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.12 (deep-hoop)" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.12 (deep-hoop)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="robotics" project-jdk-type="Python SDK" />
 </project>
