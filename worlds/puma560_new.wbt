@@ -1,14 +1,14 @@
-#VRML_SIM R2025a utf8
+#VRML_SIM R2023b utf8
 
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
-EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/unimation/puma/protos/Puma560.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/solids/protos/SolidTorus.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/balls/protos/Ball.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/Parquetry.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/toys/protos/RubberDuck.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/devices/robotiq/protos/Robotiq3fGripper.proto"
+EXTERNPROTO "../protos/Puma560Custom.proto"
 
 WorldInfo {
   info [
@@ -48,7 +48,7 @@ DEF ball Ball {
   rotation 1 0 0 0.261799
   radius 0.08
 }
-SolidTorus {
+DEF HOOP SolidTorus {
   translation 6.35 1.21 1
   rotation -1 0 0 -5.307179586466759e-06
   majorRadius 0.45
@@ -64,7 +64,7 @@ SolidTorus {
     metalness 0
   }
 }
-Puma560 {
+Puma560Custom {
   hidden translation_6 -4.218066729233527e-10 -4.8647974537630034e-11 -0.08000091006476961
   hidden rotation_8 0.7068252250609617 0.7073882252402285 3.000159634499449e-06 3.1415980003176114
   hidden rotation_9 0 0 -1 1.264405455326821e-07
@@ -73,7 +73,7 @@ Puma560 {
   hidden rotation_16 0 0 1 5.16191365590357e-08
   hidden rotation_17 0 0 -1 0.5199999997412635
   translation 0 0.62 0
-  controller "keyboard_controller"
+  controller "<extern>"
   supervisor TRUE
   gripperSlot [
     Robotiq3fGripper {
