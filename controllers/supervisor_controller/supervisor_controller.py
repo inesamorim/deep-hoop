@@ -1,7 +1,10 @@
+import gym
 import numpy as np
 from deepbots.supervisor.controllers.robot_supervisor_env import RobotSupervisorEnv
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
-from controller import PositionSensor, Motor
+from controller import PositionSensor, Motor, Supervisor
 
 JOINT_NAMES = [f"joint{i}" for i in range(1, 6)]
 JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 6)]
@@ -16,16 +19,14 @@ JOINT_LIMITS = [
 ]
 
 # TODO:
-# - train loop
 # - rewards
-# - reset
 # - parar o robo depois de lançar e só simular bola?
 
 class BallerSupervisor(RobotSupervisorEnv):
-    def __init__(self):
-        super().__init__()
-        self.observation_space = 4  # The agent has 4 inputs
-        self.action_space = 6  # The agent can perform 2 actions
+    def __init__(self, timestep: int | None=None):
+        super().__init__(timestep=timestep)
+        self.observation_space = gym.spaces.Box(0, 1, (14,))
+        self.action_space = gym.spaces.Box(-1, 1, (6,))
 
         self.timestep = int(self.getBasicTimeStep())
         self.robot = self.getSelf()  # Grab the robot reference from the supervisor to access various robot methods
@@ -92,7 +93,7 @@ class BallerSupervisor(RobotSupervisorEnv):
             # Was high enough
             return True
 
-        if ball_pos[2] <= -1:
+        if ball_pos[2] <= 0.2:
             # Wasn't high enough
             return True
 
@@ -105,7 +106,7 @@ class BallerSupervisor(RobotSupervisorEnv):
         return False
 
     def get_info(self):
-        return None
+        return {}
 
     def render(self, mode='human'):
         pass
@@ -115,17 +116,56 @@ class BallerSupervisor(RobotSupervisorEnv):
             self.was_higher_than_hoop = True
 
         for i in range(len(self.joints)):
-            vel = np.clip(action[i], JOINT_LIMITS[i][0], JOINT_LIMITS[i][1])
-            self.joints[i].setVelocity(vel)
+            self.joints[i].setPosition(float("inf"))
+            self.joints[i].setVelocity(action[i])
 
         release_ball = action[-1]
         # TODO: release the ball
 
+    def reset(self):
+        self.was_higher_than_hoop = False
+        self.ball_last_vel = np.array([0, 0, 0])
+
+        return super().reset()
+
+
+CONTINUE_TRAINING = False
+
+env = BallerSupervisor()
+
+# Set up callbacks
+checkpointCallback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
+callback = CallbackList([checkpointCallback])
+model_path = f"./models/final"
+# numberSteps = 50_000
+# model_path = f"./models/baller_{numberSteps}_steps"
+
+if CONTINUE_TRAINING:
+    model = PPO.load(model_path, env=env)
+else:
+    model = PPO("MlpPolicy", env, verbose=1)
+
+# Start/Continue training
+model.learn(
+    total_timesteps=1_000_000,
+    callback=callback,
+    reset_num_timesteps=not CONTINUE_TRAINING  # Only reset if new training
+)
+
+model.save(f"./models/final")
+
+exit()
 
 
 env = BallerSupervisor()
+model = PPO("MlpPolicy", env, verbose=1)
+model.learn(total_timesteps=10_000)
+
+exit()
+
+env = BallerSupervisor()
 print(env.get_observations())
-while env.step([100, 0,0,0,0]) != -1:
+while env.step([1, 0,0,0,0]) != -1:
     print(env.get_observations())
 
 
