@@ -74,7 +74,7 @@ class BallerSupervisor(RobotSupervisorEnv):
         # Relative pos
         relative_pos = [hoop_pos[i] - ball_pos[i] for i in range(len(hoop_pos))]
         #################
-        if self.closest_dist > min(relative_pos): self.closest_dist = relative_pos # see if there is a way to improve this
+        if self.closest_dist > sum(rv**2 for rv in relative_pos): self.closest_dist = relative_pos # see if there is a way to improve this
         #################
         obs.extend(relative_pos)
 
@@ -98,9 +98,6 @@ class BallerSupervisor(RobotSupervisorEnv):
 
     def get_reward(self, action=None):
         # Reward is +1 for every step the episode hasn't ended
-        return 1
-
-    def reward(self):
         # Called after simulation to evaluate the run
         return self.released * (999 * self.passed_hoop + self.closest_dist)
 
