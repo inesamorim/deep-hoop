@@ -53,19 +53,22 @@ joint_positions = [0] * len(joints)
 finger_motors = {
     "finger_1_joint_1": robot.getDevice("finger_1_joint_1"),
     "finger_2_joint_1": robot.getDevice("finger_2_joint_1"),
-    "finger_middle_joint_1": robot.getDevice("finger_middle_joint_1")
+    "finger_middle_joint_1": robot.getDevice("finger_middle_joint_1"),
+    "finger_1_link_0": robot.getDevice("finger_1_link_0"),
+    "finger_2_link_0": robot.getDevice("finger_2_link_0"),
+    "finger_middle_link_1": robot.getDevice("finger_middle_link_1"),
+    "finger_1_link_0": robot.getDevice("finger_1_link_0"),
+    "finger_2_link_0": robot.getDevice("finger_2_link_0"),
+    "finger_middle_link_1": robot.getDevice("finger_middle_link_1")
 }
 
-finger_positions = {
-    "finger_1_joint_1": 0.0,
-    "finger_2_joint_1": 0.0,
-    "finger_middle_joint_1": 0.0
-}
+finger_positions = {name: 0.0 for name in finger_motors}
+
 
 finger_limits = {
-    "finger_1_joint_1": (0.0, 1.2),
-    "finger_2_joint_1": (0.0, 1.2),
-    "finger_middle_joint_1": (0.0, 1.2)
+    "finger_1_joint_1": (0.0495, 1.2218),
+    "finger_2_joint_1": (0.0495, 1.2218),
+    "finger_middle_joint_1": (0.0495, 1.2218)
 }
 
 
@@ -78,7 +81,9 @@ key_bindings = {
     'T': ("puma", 4, 0.05), 'G': ("puma", 4, -0.05),
     'U': ("gripper", "finger_1_joint_1", 0.05), 'J': ("gripper", "finger_1_joint_1", -0.05),
     'I': ("gripper", "finger_2_joint_1", 0.05), 'K': ("gripper", "finger_2_joint_1", -0.05),
-    'O': ("gripper", "finger_middle_joint_1", 0.05), 'L': ("gripper", "finger_middle_joint_1", -0.05)
+    'O': ("gripper", "finger_middle_joint_1", 0.05), 'L': ("gripper", "finger_middle_joint_1", -0.05),
+    'Z': ("gripper_all", None, 0.05),  # Close all fingers
+    'X': ("gripper_all", None, -0.05)  # Open all fingers
 }
 
 
@@ -104,6 +109,14 @@ while robot.step(timestep) != -1:
             if min_limit <= new_pos <= max_limit:
                 finger_positions[index_or_name] = new_pos
                 finger_motors[index_or_name].setPosition(new_pos)
+
+        elif control_type == "gripper_all":
+            for name in finger_positions:
+                min_limit, max_limit = finger_limits[name]
+                new_pos = finger_positions[name] + delta
+                if min_limit <= new_pos <= max_limit:
+                    finger_positions[name] = new_pos
+                    finger_motors[name].setPosition(new_pos)
 
     print("Joint positions:", joint_positions)
     print("Gripper positions:", finger_positions)

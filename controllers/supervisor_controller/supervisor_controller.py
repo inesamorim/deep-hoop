@@ -49,6 +49,18 @@ class BallerSupervisor(RobotSupervisorEnv):
         self.was_higher_than_hoop = False
         self.ball_last_vel = np.array([0, 0, 0])
 
+        self.released_ball = False # if robot is still holding the ball
+        self.passed_hoop = False # ball has passed the hoop
+        self.closest_dist = 99999
+        self.passing_center = self.hoop.getPosition()
+        # Access the geometry node of the hoop
+        geometry = self.hoop.getField("children").getMFNode(0).getField("geometry")
+        # Get the outer radius (distance from center to tube middle)
+        outer_radius = geometry.getField("outerRadius").getSFFloat()
+        # Get the inner radius (tube thickness)
+        inner_radius = geometry.getField("innerRadius").getSFFloat()
+        self.passing_radius = outer_radius-inner_radius
+
         self.steps_per_episode = 200  # Max number of steps per episode
         self.episode_score = 0  # Score accumulated during an episode
         self.episode_score_list = []  # A list to save all the episode scores, used to check if task is solved
@@ -62,6 +74,9 @@ class BallerSupervisor(RobotSupervisorEnv):
 
         # Relative pos
         relative_pos = [hoop_pos[i] - ball_pos[i] for i in range(len(hoop_pos))]
+        #################
+        if self.closest_dist > min(relative_pos): self.closest_dist = relative_pos # see if there is a way to improve this
+        #################
         obs.extend(relative_pos)
 
         # Joint angles
@@ -85,6 +100,22 @@ class BallerSupervisor(RobotSupervisorEnv):
     def get_reward(self, action=None):
         # Reward is +1 for every step the episode hasn't ended
         return 1
+
+    def reward(self):
+        # Called after simulation to evaluate the run
+        return self.released * (999 * self.passed_hoop + self.closest_dist)
+
+    def is_ball_passing(self):
+        ball_center = self.ball.getPosition() #returns x,y,z coordenates of center
+
+        # Compute distance between ball center and passing zone center (XY distance)
+        dist = np.sqrt((ball_center[0] - self.passing_center[0]) ** 2 +
+                         (ball_center[1] - self.passing_center[1]) ** 2)
+
+        # Ball passes through if it's within the passing radius and at the correct Z level
+        if dist <= self.passing_radius and abs(ball_center[2] - self.passing_center[2]) < 0.05:  # Allowing small Z tolerance
+            return True
+        return False
 
     def is_done(self):
         ball_pos = self.ball.getPosition()
