@@ -270,4 +270,3 @@ while True:
     selected_action, action_prob = agent.work(observation, type_="selectActionMax")
     observation, _, done, _ = env.step([selected_action])
     if done:
-        observation = env.reset()
