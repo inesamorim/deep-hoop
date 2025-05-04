@@ -3,22 +3,14 @@ import numpy as np
 from deepbots.supervisor.controllers.robot_supervisor_env import RobotSupervisorEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+from gym.wrappers import TimeLimit
 
 from controller import PositionSensor, Motor, Supervisor
 
-JOINT_NAMES = [f"joint{i}" for i in range(1, 6)]
-JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 6)]
+JOINT_NAMES = [f"joint{i}" for i in range(1, 4)]
+JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 4)]
 HAND_NAMES = [f"finger_{i}_joint_1" for i in [1, 2, "middle"]]
 HAND_SENSOR_NAMES = [f"finger_{i}_joint_1_sensor" for i in [1, 2, "middle"]]
-
-JOINT_LIMITS = [
-    (-2.792, 2.792),
-    (-3.9369, 0.7854),
-    (-0.7854, 3.9269),
-    (-1.9198, 2.967),
-    (-1.7453, 1.7453),
-    # (-4.6425, 4.6425),
-]
 
 # TODO:
 # - parar o robo depois de lançar e só simular bola?
@@ -26,8 +18,24 @@ JOINT_LIMITS = [
 class BallerSupervisor(RobotSupervisorEnv):
     def __init__(self, timestep: int | None=None):
         super().__init__(timestep=timestep)
-        self.observation_space = gym.spaces.Box(0, 1, (14,))
-        self.action_space = gym.spaces.Box(-1, 1, (6,))
+        # self.observation_space = gym.spaces.Box(-3, 3, (14,))
+        # self.action_space = gym.spaces.Box(-1, 1, (6,))
+        low = np.array([
+            -10.0, -10.0, -10.0,
+            -2.792, -3.9369, -0.7854, # -1.9198, -1.7453,
+            -10.0, -10.0, -10.0,
+            -10.0, -10.0, -10.0,
+        ])
+        high = np.array([
+            10.0, 10.0, 10.0,
+            2.792, 0.7854, 3.9269, # 2.967, 1.7453,
+            10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0,
+        ])
+        self.observation_space = gym.spaces.Box(low, high)
+        low = np.array([-4] * 4)
+        high = np.array([4, 0, 0, 0])
+        self.action_space = gym.spaces.Box(low, high)
 
         self.timestep = int(self.getBasicTimeStep())
         self.robot = self.getSelf()  # Grab the robot reference from the supervisor to access various robot methods
@@ -64,13 +72,6 @@ class BallerSupervisor(RobotSupervisorEnv):
             sensor.enable(self.timestep)
             self.hand_sensors.append(sensor)
 
-        self.was_higher_than_hoop = False
-        self.ball_last_vel = np.array([0, 0, 0])
-
-        self.released_ball = False # if robot is still holding the ball
-        self.passed_hoop = False # ball has passed the hoop
-        self.closest_dist = 99999
-        self.passing_center = self.hoop.getPosition()
         # Get the outer radius (distance from center to tube middle)
         outer_radius = self.hoop.getField("majorRadius").getSFFloat()
         # Get the inner radius (tube thickness)
@@ -90,10 +91,6 @@ class BallerSupervisor(RobotSupervisorEnv):
 
         # Relative pos
         relative_pos = [hoop_pos[i] - ball_pos[i] for i in range(len(hoop_pos))]
-        #################
-        if self.closest_dist > sum(rv**2 for rv in relative_pos):
-            self.closest_dist = sum(rv**2 for rv in relative_pos) # see if there is a way to improve this
-        #################
         obs.extend(relative_pos)
 
         # Joint angles
@@ -106,7 +103,11 @@ class BallerSupervisor(RobotSupervisorEnv):
         obs.extend(ball_accel)
         obs.extend(ball_cur_vel)
 
-        self.ball_last_vel = ball_cur_vel
+        # Update ball min distance
+        dist = np.linalg.norm(relative_pos)
+        if dist < self.closest_dist:
+            self.closest_dist = dist # TODO: see if there is a way to improve this
+            self.closest_pos = ball_pos
 
         return obs
 
@@ -115,7 +116,53 @@ class BallerSupervisor(RobotSupervisorEnv):
         return [0.0 for _ in range(self.observation_space.shape[0])]
 
     def get_reward(self, action=None):
-        return self.released_ball * (999 * self.passed_hoop + self.closest_dist)
+        return self.rew2()
+
+    def rew2(self):
+        ball_pos = np.asarray(self.ball.getPosition())
+        ball_vel = np.asarray(self.ball.getVelocity()[:3])
+        hoop_pos = np.asarray(self.hoop.getPosition())
+        rel_pos = hoop_pos - ball_pos
+
+        # Delta-distance
+        d = np.linalg.norm(rel_pos)
+        r_dd = self.ball_last_dist - d
+
+        # Raw velocity toward hoop
+        dir_vec = rel_pos / (d + 1e-6)
+        r_vel = np.dot(ball_vel, dir_vec)
+
+        # Time penalty
+        r_time = -0.01
+
+        reward = r_dd + 0.5 * r_vel + r_time
+        print(f"{r_dd=}, {r_vel=}, reward: {reward}")
+        return reward
+
+    def rew0(self):
+        return self.released_ball * (999 * self.passed_hoop - self.closest_dist)
+
+    def rew1(self):
+        # Move a bola lentamente da direção do hoop para max r_velo
+
+        ball_pos = np.array(self.ball.getPosition())
+        hoop_pos = np.array(self.hoop.getPosition())
+        rel_pos = hoop_pos - ball_pos
+        dist = np.linalg.norm(rel_pos)
+
+        # how well the ball is heading toward the hoop
+        r_velo = np.dot(self.ball_last_vel, rel_pos) / (
+                np.linalg.norm(self.ball_last_vel) * dist + 1e-6)
+
+        # Time penalty = move fast?
+        r_time = -0.01
+
+        # print("dist:", foo)
+        # print("Reward:", 999 * self.passed_hoop + (4 - foo) / 4)
+        print("r_velo:", r_velo)
+        print("dist:", - self.closest_dist / 4)
+        print("Reward:", 999 * self.passed_hoop - dist / 4 + r_velo + r_time)
+        return 999 * self.passed_hoop - dist / 4 + 0.9 * r_velo + r_time
 
     def is_ball_passing(self):
         ball_center = self.ball.getPosition() #returns x,y,z coordenates of center
@@ -158,9 +205,11 @@ class BallerSupervisor(RobotSupervisorEnv):
         pass
 
     def apply_action(self, action):
+        print("Action:", action)
         if self.ball.getPosition()[2] >= self.hoop.getPosition()[2]:
             self.was_higher_than_hoop = True
 
+        # Check if released ball
         ball_pos = self.ball.getPosition()
         hand_pos = self.getFromDef("HAND").getPosition()
         if 0.2 < np.sqrt((ball_pos[0] - hand_pos[0]) ** 2 +
@@ -168,47 +217,137 @@ class BallerSupervisor(RobotSupervisorEnv):
                     (ball_pos[2] - hand_pos[2]) ** 2):
             self.released_ball = True
 
+        # Update ball velocity
+        # yes this must be done here
+        self.ball_last_vel = np.asarray(self.ball.getVelocity()[:3])
+        ball_pos = np.asarray(self.ball.getPosition())
+        hoop_pos = np.asarray(self.hoop.getPosition())
+        rel_pos = hoop_pos - ball_pos
+        self.ball_last_dist = np.linalg.norm(rel_pos)
+
+        # Set joint velocities
         for i in range(len(self.joints)):
             self.joints[i].setPosition(float("inf"))
             self.joints[i].setVelocity(action[i])
 
+        # Release ball
         release_ball = action[-1]
         for i in range(len(self.hand)):
             self.hand[i].setPosition(float("inf"))
             self.hand[i].setVelocity(release_ball)
 
     def reset(self):
+        hoop_pos = np.asarray(self.hoop.getPosition())
+        ball_pos = np.asarray(self.ball.getPosition())
+        dist = np.linalg.norm(hoop_pos - ball_pos)
+
         self.was_higher_than_hoop = False
         self.ball_last_vel = np.array([0, 0, 0])
-        self.released_ball = False
+        self.ball_last_dist = dist
+
+        self.released_ball = False # if robot is still holding the ball
+        self.passed_hoop = False # ball has passed the hoop
+        self.closest_dist = 99999
+        self.closest_pos = ball_pos
+        self.passing_center = hoop_pos
 
         return super().reset()
 
+class HERBallerSupervisor(BallerSupervisor):
+    def __init__(self):
+        super().__init__()
+        print(self.observation_space)
+        self.observation_space = gym.spaces.Dict({
+            "observation": self.observation_space,
+            "achieved_goal": gym.spaces.Box(0, 1, (3,)),
+            "desired_goal": gym.spaces.Box(0, 1, (3,)),
+        })
+
+    def get_observations(self):
+        obs_orig = super().get_observations()
+        return {
+            "observation": obs_orig,
+            "achieved_goal": self.closest_pos,
+            "desired_goal": self.hoop.getPosition(),
+        }
+
+    def get_default_observation(self):
+        return {
+            "observation": [0.0 for _ in range(self.observation_space["observation"].shape[0])],
+            "achieved_goal": self.ball.getPosition(),
+            "desired_goal": self.hoop.getPosition(),
+        }
+
+    def compute_reward(self, achieved_goal, desired_goal, info):
+        return info.released_ball * (999 * info.passed_hoop - info.closest_dist)
+
+
+def train_her():
+    from stable_baselines3 import HerReplayBuffer, DDPG, DQN, SAC, TD3
+
+    env = HERBallerSupervisor()
+    env = TimeLimit(env, TIME_LIMIT)
+
+    model_class = DDPG  # works also with SAC, DDPG and TD3
+
+    # Available strategies (cf paper): future, final, episode
+    goal_selection_strategy = "future" # equivalent to GoalSelectionStrategy.FUTURE
+
+    # Initialize the model
+    model = model_class(
+        "MultiInputPolicy",
+        env,
+        replay_buffer_class=HerReplayBuffer,
+        # Parameters for HER
+        replay_buffer_kwargs=dict(
+            n_sampled_goal=4,
+            goal_selection_strategy=goal_selection_strategy,
+        ),
+        learning_starts=TIME_LIMIT,
+        verbose=1,
+    )
+
+    model.learn(10000)
+
+    return model
+
+def train_PPO():
+    env = BallerSupervisor()
+    env = TimeLimit(env, TIME_LIMIT)
+
+    # Set up callbacks
+    checkpointCallback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
+    callback = CallbackList([checkpointCallback])
+    model_path = f"./models/baller_100000_steps.zip"
+    # numberSteps = 50_000
+    # model_path = f"./models/baller_{numberSteps}_steps"
+
+    if CONTINUE_TRAINING:
+        model = PPO.load(model_path, env=env, tensorboard_log="./logs/")
+    else:
+        model = PPO("MlpPolicy", env, tensorboard_log="./logs/", verbose=1)
+
+    # Start/Continue training
+    model.learn(
+        total_timesteps=1_0000_000,
+        callback=callback,
+        reset_num_timesteps=not CONTINUE_TRAINING  # Only reset if new training
+    )
+
+    model.save(f"./models/final")
+
+    return model
+
 
 CONTINUE_TRAINING = False
+TRAIN_PPO = True
 
-env = BallerSupervisor()
+TIME_LIMIT = 1_000
 
-# Set up callbacks
-checkpointCallback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
-callback = CallbackList([checkpointCallback])
-model_path = f"./models/final"
-# numberSteps = 50_000
-# model_path = f"./models/baller_{numberSteps}_steps"
-
-if CONTINUE_TRAINING:
-    model = PPO.load(model_path, env=env)
+if TRAIN_PPO:
+    train_PPO()
 else:
-    model = PPO("MlpPolicy", env, verbose=1)
-
-# Start/Continue training
-model.learn(
-    total_timesteps=1_000_000,
-    callback=callback,
-    reset_num_timesteps=not CONTINUE_TRAINING  # Only reset if new training
-)
-
-model.save(f"./models/final")
+    train_her()
 
 exit()
 
@@ -270,3 +409,4 @@ while True:
     selected_action, action_prob = agent.work(observation, type_="selectActionMax")
     observation, _, done, _ = env.step([selected_action])
     if done:
+        pass

@@ -1,3 +1,4 @@
 .venv
 .idea
 controllers/supervisor_controller/models
+controllers/supervisor_controller/logs
