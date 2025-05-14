@@ -21,14 +21,16 @@ class BallerSupervisor(RobotSupervisorEnv):
         # self.observation_space = gym.spaces.Box(-3, 3, (14,))
         # self.action_space = gym.spaces.Box(-1, 1, (6,))
         low = np.array([
-            -10.0, -10.0, -10.0,
-            -2.792, -3.9369, -0.7854, # -1.9198, -1.7453,
-            -10.0, -10.0, -10.0,
-            -10.0, -10.0, -10.0,
+            -10.0, -10.0, -10.0, # rel_pos
+            -2.792, -3.9369, -0.7854, # -1.9198, -1.7453, # joints
+            0.0495, 0.0495, 0.0495, # hand joints
+            -10.0, -10.0, -10.0, # ball acceleration
+            -10.0, -10.0, -10.0, # ball velocity
         ])
         high = np.array([
             10.0, 10.0, 10.0,
             2.792, 0.7854, 3.9269, # 2.967, 1.7453,
+            1.2218, 1.2218, 1.2218,
             10.0, 10.0, 10.0,
             10.0, 10.0, 10.0,
         ])
@@ -95,6 +97,10 @@ class BallerSupervisor(RobotSupervisorEnv):
 
         # Joint angles
         for sensor in self.joint_sensors:
+            obs.append(sensor.getValue())
+
+        # Hand angles
+        for sensor in self.hand_sensors:
             obs.append(sensor.getValue())
 
         # Ball Acceleration and Velocity
@@ -180,14 +186,20 @@ class BallerSupervisor(RobotSupervisorEnv):
         ball_pos = self.ball.getPosition()
 
         if self.is_ball_passing():
+            # Hit the hoop
             return True
 
         if self.was_higher_than_hoop and ball_pos[2] < self.hoop.getPosition()[2]:
-            # Was high enough
+            # Missed hoop
             return True
 
+        # ball_vel = self.ball.getVelocity()
+        # if not self.was_higher_than_hoop and self.released_ball and ball_vel[2] < 0:
+        #     # Wasnt high enough
+        #     return True
+
         if ball_pos[2] <= 0.2:
-            # Wasn't high enough
+            # Hit ground
             return True
 
         return False
@@ -264,9 +276,15 @@ class HERBallerSupervisor(BallerSupervisor):
 
     def get_observations(self):
         obs_orig = super().get_observations()
+
+        # if self.released_ball:
+        #     while super(Supervisor, self).step(self.timestep) != -1:
+        #         if self.is_done():
+        #             break
+
         return {
             "observation": obs_orig,
-            "achieved_goal": self.closest_pos,
+            "achieved_goal": self.ball.getPosition(),
             "desired_goal": self.hoop.getPosition(),
         }
 
@@ -277,18 +295,99 @@ class HERBallerSupervisor(BallerSupervisor):
             "desired_goal": self.hoop.getPosition(),
         }
 
+    def is_done(self):
+        return super().is_done()
+        if not self.released_ball:
+            return False
+
+        while super(Supervisor, self).step(self.timestep) != -1:
+            ball_pos = self.ball.getPosition()
+
+            if self.is_ball_passing():
+                # Hit the hoop
+                return True
+
+            if self.was_higher_than_hoop and ball_pos[2] < self.hoop.getPosition()[2]:
+                # Missed hoop
+                return True
+
+            # ball_vel = self.ball.getVelocity()
+            # if not self.was_higher_than_hoop and self.released_ball and ball_vel[2] < 0:
+            #     # Wasnt high enough
+            #     return True
+
+            if ball_pos[2] <= 0.2:
+                # Hit ground
+                return True
+
+        return True
+
+    def get_info(self):
+        return {
+            "ball_last_dist": self.ball_last_dist,
+            "ball_vel": self.ball.getVelocity()[:3],
+        }
+
     def get_reward(self, action=None):
         ball_pos = np.asarray(self.ball.getPosition())
+        ball_vel = np.asarray(self.ball.getVelocity()[:3])
         hoop_pos = np.asarray(self.hoop.getPosition())
         dist = -np.linalg.norm(hoop_pos - ball_pos)
 
-        return int(self.is_ball_passing() + dist)
+        # if self.released_ball:
+        #     while super(Supervisor, self).step(self.timestep) != -1:
+        #         if self.is_done():
+        #             break
+
+        # if self.is_done():
+        #     return -dist
+
+        return int(self.is_ball_passing())
+        # return self.rew(ball_pos, ball_vel, hoop_pos, self.ball_last_dist)
+
+    def rew(
+        self,
+        ball_pos: list[float],
+        ball_vel: list[float],
+        hoop_pos: list[float],
+        ball_last_dist: float,
+    ):
+        ball_pos = np.asarray(ball_pos)
+        ball_vel = np.asarray(ball_vel)
+        hoop_pos = np.asarray(hoop_pos)
+        rel_pos = hoop_pos - ball_pos
+
+        # Delta-distance
+        d = np.linalg.norm(rel_pos)
+        r_dd = 0 # ball_last_dist - d
+
+        # Raw velocity toward hoop
+        dir_vec = rel_pos / (d + 1e-6)
+        r_vel = np.dot(ball_vel, dir_vec)
+
+        # Time penalty
+        r_time = -0.01
+
+        # Success boost
+        passed_hoop = self._is_ball_passing(ball_pos, hoop_pos)
+
+        reward = 10 * r_dd + 0.5 * r_vel + r_time + passed_hoop
+        print(f"{r_dd=}, {r_vel=}, {reward=}")
+        return reward
 
     def compute_reward(self, achieved_goal, desired_goal, info):
         return np.asarray(
-            [int(self._is_ball_passing(ball, hoop) - np.linalg.norm(np.asarray(hoop) - np.asarray(ball)))
+            [int(self._is_ball_passing(ball, hoop))
              for ball, hoop in zip(achieved_goal, desired_goal)]
         )
+        # return np.asarray(
+        #     [self.rew(
+        #         ball,
+        #         info["ball_vel"],
+        #         hoop,
+        #         info["ball_last_dist"],
+        #     ) for ball, hoop, info in zip(achieved_goal, desired_goal, info)]
+        # )
 
 
 def train_her():
@@ -304,20 +403,20 @@ def train_her():
                                  render=False)
     callback = CallbackList([checkpointCallback, eval_callback])
 
-    model_class = DDPG  # works also with SAC, DDPG and TD3
-
     # Available strategies (cf paper): future, final, episode
-    goal_selection_strategy = "final" # equivalent to GoalSelectionStrategy.FUTURE
+    goal_selection_strategy = "future" # equivalent to GoalSelectionStrategy.FUTURE
 
     model_path = f"./models/baller_100000_steps.zip"
     # numberSteps = 50_000
     # model_path = f"./models/baller_{numberSteps}_steps"
 
+    from stable_baselines3 import SAC
+    model_class = SAC  # works also with SAC, DDPG and TD3
     if CONTINUE_TRAINING:
         model = model_class.load(model_path, env=env, tensorboard_log="./logs/her")
     else:
         from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
-        action_noise = NormalActionNoise(mean=np.zeros(env.action_space.shape[0]),
+        action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(env.action_space.shape[0]),
                                          sigma=0.1 * np.ones(env.action_space.shape[0]))
         # Initialize the model
         model = model_class(
@@ -329,6 +428,7 @@ def train_her():
             replay_buffer_kwargs=dict(
                 n_sampled_goal=4,
                 goal_selection_strategy=goal_selection_strategy,
+                copy_info_dict=True,
             ),
             learning_starts=TIME_LIMIT,
             tensorboard_log="./logs/her",
@@ -358,7 +458,7 @@ def train_PPO():
     else:
         from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
         action_noise = NormalActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
-        model = TD3("MlpPolicy", env, action_noise=action_noise, tensorboard_log="./logs/", verbose=1)
+        model = DDPG("MlpPolicy", env, action_noise=action_noise, tensorboard_log="./logs/", verbose=1)
 
     # Start/Continue training
     model.learn(
