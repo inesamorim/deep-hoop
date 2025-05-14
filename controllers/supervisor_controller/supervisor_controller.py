@@ -1,8 +1,8 @@
 import gym
 import numpy as np
 from deepbots.supervisor.controllers.robot_supervisor_env import RobotSupervisorEnv
-from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+from stable_baselines3 import PPO, DDPG, TD3
+from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList, EvalCallback
 from gym.wrappers import TimeLimit
 
 from controller import PositionSensor, Motor, Supervisor
@@ -135,8 +135,8 @@ class BallerSupervisor(RobotSupervisorEnv):
         # Time penalty
         r_time = -0.01
 
-        reward = r_dd + 0.5 * r_vel + r_time
-        print(f"{r_dd=}, {r_vel=}, reward: {reward}")
+        reward = 10 * r_dd + 0.5 * r_vel + r_time + self.passed_hoop
+        print(f"{r_dd=}, {r_vel=}, {reward=}")
         return reward
 
     def rew0(self):
@@ -166,15 +166,15 @@ class BallerSupervisor(RobotSupervisorEnv):
 
     def is_ball_passing(self):
         ball_center = self.ball.getPosition() #returns x,y,z coordenates of center
+        return self._is_ball_passing(ball_center, self.passing_center)
 
+    def _is_ball_passing(self, ball_center: list[float], hoop_center: list[float]):
         # Compute distance between ball center and passing zone center (XY distance)
-        dist = np.sqrt((ball_center[0] - self.passing_center[0]) ** 2 +
-                         (ball_center[1] - self.passing_center[1]) ** 2)
+        dist = np.sqrt((ball_center[0] - hoop_center[0]) ** 2 +
+                       (ball_center[1] - hoop_center[1]) ** 2)
 
         # Ball passes through if it's within the passing radius and at the correct Z level
-        if dist <= self.passing_radius and abs(ball_center[2] - self.passing_center[2]) < 0.05:  # Allowing small Z tolerance
-            return True
-        return False
+        return dist <= self.passing_radius and abs(ball_center[2] - hoop_center[2]) < 0.05  # Allowing small Z tolerance
 
     def is_done(self):
         ball_pos = self.ball.getPosition()
@@ -256,7 +256,6 @@ class BallerSupervisor(RobotSupervisorEnv):
 class HERBallerSupervisor(BallerSupervisor):
     def __init__(self):
         super().__init__()
-        print(self.observation_space)
         self.observation_space = gym.spaces.Dict({
             "observation": self.observation_space,
             "achieved_goal": gym.spaces.Box(0, 1, (3,)),
@@ -278,8 +277,18 @@ class HERBallerSupervisor(BallerSupervisor):
             "desired_goal": self.hoop.getPosition(),
         }
 
+    def get_reward(self, action=None):
+        ball_pos = np.asarray(self.ball.getPosition())
+        hoop_pos = np.asarray(self.hoop.getPosition())
+        dist = -np.linalg.norm(hoop_pos - ball_pos)
+
+        return int(self.is_ball_passing() + dist)
+
     def compute_reward(self, achieved_goal, desired_goal, info):
-        return info.released_ball * (999 * info.passed_hoop - info.closest_dist)
+        return np.asarray(
+            [int(self._is_ball_passing(ball, hoop) - np.linalg.norm(np.asarray(hoop) - np.asarray(ball)))
+             for ball, hoop in zip(achieved_goal, desired_goal)]
+        )
 
 
 def train_her():
@@ -288,27 +297,49 @@ def train_her():
     env = HERBallerSupervisor()
     env = TimeLimit(env, TIME_LIMIT)
 
+    checkpointCallback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
+    eval_callback = EvalCallback(env, best_model_save_path="./models/her",
+                                 log_path="./logs/her", eval_freq=10_000,
+                                 n_eval_episodes=5, deterministic=True,
+                                 render=False)
+    callback = CallbackList([checkpointCallback, eval_callback])
+
     model_class = DDPG  # works also with SAC, DDPG and TD3
 
     # Available strategies (cf paper): future, final, episode
-    goal_selection_strategy = "future" # equivalent to GoalSelectionStrategy.FUTURE
+    goal_selection_strategy = "final" # equivalent to GoalSelectionStrategy.FUTURE
 
-    # Initialize the model
-    model = model_class(
-        "MultiInputPolicy",
-        env,
-        replay_buffer_class=HerReplayBuffer,
-        # Parameters for HER
-        replay_buffer_kwargs=dict(
-            n_sampled_goal=4,
-            goal_selection_strategy=goal_selection_strategy,
-        ),
-        learning_starts=TIME_LIMIT,
-        verbose=1,
+    model_path = f"./models/baller_100000_steps.zip"
+    # numberSteps = 50_000
+    # model_path = f"./models/baller_{numberSteps}_steps"
+
+    if CONTINUE_TRAINING:
+        model = model_class.load(model_path, env=env, tensorboard_log="./logs/her")
+    else:
+        from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
+        action_noise = NormalActionNoise(mean=np.zeros(env.action_space.shape[0]),
+                                         sigma=0.1 * np.ones(env.action_space.shape[0]))
+        # Initialize the model
+        model = model_class(
+            "MultiInputPolicy",
+            env,
+            action_noise=action_noise,
+            replay_buffer_class=HerReplayBuffer,
+            # Parameters for HER
+            replay_buffer_kwargs=dict(
+                n_sampled_goal=4,
+                goal_selection_strategy=goal_selection_strategy,
+            ),
+            learning_starts=TIME_LIMIT,
+            tensorboard_log="./logs/her",
+            verbose=1,
+        )
+
+    model.learn(
+        total_timesteps=10_000_000,
+        callback=callback,
+        reset_num_timesteps=not CONTINUE_TRAINING  # Only reset if new training
     )
-
-    model.learn(10000)
-
     return model
 
 def train_PPO():
@@ -323,9 +354,11 @@ def train_PPO():
     # model_path = f"./models/baller_{numberSteps}_steps"
 
     if CONTINUE_TRAINING:
-        model = PPO.load(model_path, env=env, tensorboard_log="./logs/")
+        model = TD3.load(model_path, env=env, tensorboard_log="./logs/")
     else:
-        model = PPO("MlpPolicy", env, tensorboard_log="./logs/", verbose=1)
+        from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
+        action_noise = NormalActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
+        model = TD3("MlpPolicy", env, action_noise=action_noise, tensorboard_log="./logs/", verbose=1)
 
     # Start/Continue training
     model.learn(
@@ -340,7 +373,7 @@ def train_PPO():
 
 
 CONTINUE_TRAINING = False
-TRAIN_PPO = True
+TRAIN_PPO = False
 
 TIME_LIMIT = 1_000
 
