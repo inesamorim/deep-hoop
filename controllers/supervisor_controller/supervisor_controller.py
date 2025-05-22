@@ -1,3 +1,5 @@
+from typing import Callable
+
 import gym
 import numpy as np
 from deepbots.supervisor.controllers.robot_supervisor_env import RobotSupervisorEnv
@@ -16,9 +18,100 @@ HAND_SENSOR_NAMES = [f"finger_{i}_joint_1_sensor" for i in [1, 2, "middle"]]
 # TODO:
 # - parar o robo depois de lançar e só simular bola?
 
+
+def rew_shaped(
+    ball_pos: list[float],
+    ball_vel: list[float],
+    hoop_pos: list[float],
+    ball_last_dist: float,
+):
+    ball_pos = np.asarray(ball_pos)
+    ball_vel = np.asarray(ball_vel)
+    hoop_pos = np.asarray(hoop_pos)
+    rel_pos = hoop_pos - ball_pos
+
+    # Delta-distance
+    d = np.linalg.norm(rel_pos)
+    r_dd = ball_last_dist - d
+
+    # Raw velocity toward hoop
+    dir_vec = rel_pos / (d + 1e-6)
+    r_vel = np.dot(ball_vel, dir_vec)
+
+    # Time penalty
+    r_time = -0.01
+
+    # Success boost
+    passed_hoop = is_ball_passing(ball_pos, hoop_pos)
+
+    reward = 10 * r_dd + 0.5 * r_vel + r_time + passed_hoop
+    print(f"{r_dd=}, {r_vel=}, {reward=}")
+    return reward
+
+
+def rew_sparse(
+    ball_pos: list[float],
+    ball_vel: list[float],
+    hoop_pos: list[float],
+    passing_radius: float,
+):
+    ball_pos = np.asarray(ball_pos)
+    ball_vel = np.asarray(ball_vel)
+    hoop_pos = np.asarray(hoop_pos)
+
+    return 1 if is_done(ball_pos, ball_vel, hoop_pos, passing_radius) else 0
+
+
+def rew_sparse_dist(
+    ball_pos: list[float],
+    ball_vel: list[float],
+    hoop_pos: list[float],
+    passing_radius: float,
+):
+    ball_pos = np.asarray(ball_pos)
+    ball_vel = np.asarray(ball_vel)
+    hoop_pos = np.asarray(hoop_pos)
+    dist = np.linalg.norm(hoop_pos - ball_pos)
+
+    return -dist if is_done(ball_pos, ball_vel, hoop_pos, passing_radius) else 0
+
+
+def is_done(ball_pos: list[float], ball_vel: list[float], hoop_pos: list[float], passing_radius: float):
+    if is_ball_passing(ball_pos, hoop_pos, passing_radius):
+        # Hit the hoop
+        return True
+
+    if ball_vel[2] < 0 and ball_pos[2] < hoop_pos[2]:
+        # Missed hoop
+        return True
+
+    # ball_vel = self.ball.getVelocity()
+    # if not self.was_higher_than_hoop and self.released_ball and ball_vel[2] < 0:
+    #     # Wasnt high enough
+    #     return True
+
+    if ball_pos[2] <= 0.2:
+        # Hit ground
+        return True
+
+    return False
+
+
+def is_ball_passing(ball_center: list[float], hoop_center: list[float], passing_radius: float):
+    # Compute distance between ball center and passing zone center (XY distance)
+    dist = np.sqrt((ball_center[0] - hoop_center[0]) ** 2 +
+                   (ball_center[1] - hoop_center[1]) ** 2)
+
+    # Ball passes through if it's within the passing radius and at the correct Z level
+    return dist <= passing_radius and abs(ball_center[2] - hoop_center[2]) < 0.05  # Allowing small Z tolerance
+
+
 class BallerSupervisor(RobotSupervisorEnv):
-    def __init__(self, timestep: int | None=None):
+    def __init__(self, rew_fun: Callable, timestep: int | None=None):
         super().__init__(timestep=timestep)
+
+        self.rew_fun = rew_fun
+
         # self.observation_space = gym.spaces.Box(-3, 3, (14,))
         # self.action_space = gym.spaces.Box(-1, 1, (6,))
         low = np.array([
@@ -85,7 +178,6 @@ class BallerSupervisor(RobotSupervisorEnv):
         self.episode_score = 0  # Score accumulated during an episode
         self.episode_score_list = []  # A list to save all the episode scores, used to check if task is solved
 
-
     def get_observations(self):
         obs = []
 
@@ -119,98 +211,32 @@ class BallerSupervisor(RobotSupervisorEnv):
         return obs
 
     def get_default_observation(self):
-        # This method just returns a zero vector as a default observation
-        return [0.0 for _ in range(self.observation_space.shape[0])]
+        return self.get_observations()
 
     def get_reward(self, action=None):
-        return self.rew2()
-
-    def rew2(self):
         ball_pos = np.asarray(self.ball.getPosition())
         ball_vel = np.asarray(self.ball.getVelocity()[:3])
         hoop_pos = np.asarray(self.hoop.getPosition())
-        rel_pos = hoop_pos - ball_pos
 
-        # Delta-distance
-        d = np.linalg.norm(rel_pos)
-        r_dd = self.ball_last_dist - d
-
-        # Raw velocity toward hoop
-        dir_vec = rel_pos / (d + 1e-6)
-        r_vel = np.dot(ball_vel, dir_vec)
-
-        # Time penalty
-        r_time = -0.01
-
-        # Success bonus
-        passed_hoop = self._is_ball_passing(ball_pos, hoop_pos)
-
-        reward = 10 * r_dd + 0.7 * r_vel + r_time + int(passed_hoop)
-        print(f"{r_dd=}, {r_vel=}, {reward=}")
-        return reward
-
-    def rew0(self):
-        return self.released_ball * (999 * self.passed_hoop - self.closest_dist)
-
-    def rew1(self):
-        # Move a bola lentamente da direção do hoop para max r_velo
-
-        ball_pos = np.array(self.ball.getPosition())
-        hoop_pos = np.array(self.hoop.getPosition())
-        rel_pos = hoop_pos - ball_pos
-        dist = np.linalg.norm(rel_pos)
-
-        # how well the ball is heading toward the hoop
-        r_velo = np.dot(self.ball_last_vel, rel_pos) / (
-                np.linalg.norm(self.ball_last_vel) * dist + 1e-6)
-
-        # Time penalty = move fast?
-        r_time = -0.01
-
-        # print("dist:", foo)
-        # print("Reward:", 999 * self.passed_hoop + (4 - foo) / 4)
-        print("r_velo:", r_velo)
-        print("dist:", - self.closest_dist / 4)
-        print("Reward:", 999 * self.passed_hoop - dist / 4 + r_velo + r_time)
-        return 999 * self.passed_hoop - dist / 4 + 0.9 * r_velo + r_time
+        if self.rew_fun == "shaped":
+            return rew_shaped(ball_pos, ball_vel, hoop_pos, self.ball_last_dist)
+        elif self.rew_fun == "sparse":
+            return rew_sparse(ball_pos, ball_vel, hoop_pos, self.passing_radius)
+        elif self.rew_fun == "sparse_dist":
+            return rew_sparse_dist(ball_pos, ball_vel, hoop_pos, self.passing_radius)
+        else:
+            raise ValueError("invalid reward function:", self.rew_fun)
 
     def is_ball_passing(self):
-        ball_center = self.ball.getPosition() #returns x,y,z coordenates of center
-        return self._is_ball_passing(ball_center, self.passing_center)
-
-    def _is_ball_passing(self, ball_center: list[float], hoop_center: list[float]):
-        # Compute distance between ball center and passing zone center (XY distance)
-        dist = np.sqrt((ball_center[0] - hoop_center[0]) ** 2 +
-                       (ball_center[1] - hoop_center[1]) ** 2)
-
-        # Ball passes through if it's within the passing radius and at the correct Z level
-        return dist <= self.passing_radius and abs(ball_center[2] - hoop_center[2]) < 0.05  # Allowing small Z tolerance
+        ball_center = self.ball.getPosition()
+        hoop_pos = self.hoop.getPosition()
+        return is_ball_passing(ball_center, hoop_pos, self.passing_radius)
 
     def is_done(self):
         ball_pos = self.ball.getPosition()
         ball_vel = self.ball.getVelocity()
         hoop_pos = self.hoop.getPosition()
-        return self._is_done(ball_pos, ball_vel, hoop_pos)
-
-    def _is_done(self, ball_pos: list[float], ball_vel: list[float], hoop_pos: list[float]):
-        if self._is_ball_passing(ball_pos, hoop_pos):
-            # Hit the hoop
-            return True
-
-        if ball_vel[2] < 0 and ball_pos[2] < hoop_pos[2]:
-            # Missed hoop
-            return True
-
-        # ball_vel = self.ball.getVelocity()
-        # if not self.was_higher_than_hoop and self.released_ball and ball_vel[2] < 0:
-        #     # Wasnt high enough
-        #     return True
-
-        if ball_pos[2] <= 0.2:
-            # Hit ground
-            return True
-
-        return False
+        return is_done(ball_pos, ball_vel, hoop_pos, self.passing_radius)
 
     def solved(self):
         if len(self.episode_score_list) > 100:  # Over 100 trials thus far
@@ -274,8 +300,8 @@ class BallerSupervisor(RobotSupervisorEnv):
         return super().reset()
 
 class HERBallerSupervisor(BallerSupervisor):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, rew_fun: Callable):
+        super().__init__(rew_fun=rew_fun)
         self.observation_space = gym.spaces.Dict({
             "observation": self.observation_space,
             "achieved_goal": gym.spaces.Box(0, 1, (3,)),
@@ -285,11 +311,6 @@ class HERBallerSupervisor(BallerSupervisor):
     def get_observations(self):
         obs_orig = super().get_observations()
 
-        # if self.released_ball:
-        #     while super(Supervisor, self).step(self.timestep) != -1:
-        #         if self.is_done():
-        #             break
-
         return {
             "observation": obs_orig,
             "achieved_goal": self.ball.getPosition(),
@@ -297,78 +318,33 @@ class HERBallerSupervisor(BallerSupervisor):
         }
 
     def get_default_observation(self):
-        return {
-            "observation": [0.0 for _ in range(self.observation_space["observation"].shape[0])],
-            "achieved_goal": self.ball.getPosition(),
-            "desired_goal": self.hoop.getPosition(),
-        }
+        return self.get_observations()
 
     def get_info(self):
         return {
             "ball_last_dist": self.ball_last_dist,
             "ball_vel": self.ball.getVelocity()[:3],
+            "passing_radius": self.passing_radius,
         }
 
     def get_reward(self, action=None):
-        ball_pos = np.asarray(self.ball.getPosition())
-        ball_vel = np.asarray(self.ball.getVelocity()[:3])
-        hoop_pos = np.asarray(self.hoop.getPosition())
-        dist = np.linalg.norm(hoop_pos - ball_pos)
-
-        # if self.released_ball:
-        #     while super(Supervisor, self).step(self.timestep) != -1:
-        #         if self.is_done():
-        #             break
-
-        # if self.is_done():
-        #     return -dist
-
-        return -dist if self._is_done(ball_pos, ball_vel, hoop_pos) else 0
-        # return self.rew(ball_pos, ball_vel, hoop_pos, self.ball_last_dist)
-
-    def rew(
-        self,
-        ball_pos: list[float],
-        ball_vel: list[float],
-        hoop_pos: list[float],
-        ball_last_dist: float,
-    ):
-        ball_pos = np.asarray(ball_pos)
-        ball_vel = np.asarray(ball_vel)
-        hoop_pos = np.asarray(hoop_pos)
-        rel_pos = hoop_pos - ball_pos
-
-        # Delta-distance
-        d = np.linalg.norm(rel_pos)
-        r_dd = 0 # ball_last_dist - d
-
-        # Raw velocity toward hoop
-        dir_vec = rel_pos / (d + 1e-6)
-        r_vel = np.dot(ball_vel, dir_vec)
-
-        # Time penalty
-        r_time = -0.01
-
-        # Success boost
-        passed_hoop = self._is_ball_passing(ball_pos, hoop_pos)
-
-        reward = 10 * r_dd + 0.5 * r_vel + r_time + passed_hoop
-        print(f"{r_dd=}, {r_vel=}, {reward=}")
-        return reward
+        super().get_reward(action)
 
     def compute_reward(self, achieved_goal, desired_goal, info):
         return np.asarray(
-            [-np.linalg.norm(desired_goal - achieved_goal) if self._is_done(ball, info["ball_vel"], hoop) else 0
+            [self._compute_reward()
              for ball, hoop, info in zip(achieved_goal, desired_goal, info)]
         )
-        # return np.asarray(
-        #     [self.rew(
-        #         ball,
-        #         info["ball_vel"],
-        #         hoop,
-        #         info["ball_last_dist"],
-        #     ) for ball, hoop, info in zip(achieved_goal, desired_goal, info)]
-        # )
+
+    def _compute_reward(self, ball_pos: list[float], hoop_pos: list[float], info: dict):
+        if self.rew_fun == "shaped":
+            raise NotImplementedError("im lazy and we probably are not going to use 'shaped' with HER")
+        elif self.rew_fun == "sparse":
+            return rew_sparse(ball_pos, info["ball_vel"], hoop_pos, info["passing_radius"])
+        elif self.rew_fun == "sparse_dist":
+            return rew_sparse_dist(ball_pos, info["ball_vel"], hoop_pos, info["passing_radius"])
+        else:
+            raise ValueError("invalid reward function:", self.rew_fun)
 
 
 def train_her():
