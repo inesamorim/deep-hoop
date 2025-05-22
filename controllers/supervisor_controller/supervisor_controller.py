@@ -1,9 +1,11 @@
 import gym
 import numpy as np
 from deepbots.supervisor.controllers.robot_supervisor_env import RobotSupervisorEnv
-from stable_baselines3 import PPO, DDPG, TD3
+from stable_baselines3 import PPO, DDPG, TD3, SAC, HerReplayBuffer
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList, EvalCallback
 from gym.wrappers import TimeLimit
+from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
+
 from controller import PositionSensor, Motor, Supervisor
 
 JOINT_NAMES = [f"joint{i}" for i in range(1, 4)]
@@ -27,11 +29,11 @@ class BallerSupervisor(RobotSupervisorEnv):
             -10.0, -10.0, -10.0, # ball velocity
         ])
         high = np.array([
-            10.0, 10.0, 10.0,
-            2.792, 0.7854, 3.9269, # 2.967, 1.7453,
-            1.2218, 1.2218, 1.2218,
-            10.0, 10.0, 10.0,
-            10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0, # rel_pos
+            2.792, 0.7854, 3.9269, # 2.967, 1.7453, # joints
+            1.2218, 1.2218, 1.2218, # hand joints
+            10.0, 10.0, 10.0, # ball acceleration
+            10.0, 10.0, 10.0, # ball velocity
         ])
         self.observation_space = gym.spaces.Box(low, high)
         low = np.array([-4] * 4)
@@ -140,7 +142,10 @@ class BallerSupervisor(RobotSupervisorEnv):
         # Time penalty
         r_time = -0.01
 
-        reward = 10 * r_dd + 0.5 * r_vel + r_time + self.passed_hoop
+        # Success bonus
+        passed_hoop = self._is_ball_passing(ball_pos, hoop_pos)
+
+        reward = 10 * r_dd + 0.7 * r_vel + r_time + int(passed_hoop)
         print(f"{r_dd=}, {r_vel=}, {reward=}")
         return reward
 
@@ -183,12 +188,16 @@ class BallerSupervisor(RobotSupervisorEnv):
 
     def is_done(self):
         ball_pos = self.ball.getPosition()
+        ball_vel = self.ball.getVelocity()
+        hoop_pos = self.hoop.getPosition()
+        return self._is_done(ball_pos, ball_vel, hoop_pos)
 
-        if self.is_ball_passing():
+    def _is_done(self, ball_pos: list[float], ball_vel: list[float], hoop_pos: list[float]):
+        if self._is_ball_passing(ball_pos, hoop_pos):
             # Hit the hoop
             return True
 
-        if self.was_higher_than_hoop and ball_pos[2] < self.hoop.getPosition()[2]:
+        if ball_vel[2] < 0 and ball_pos[2] < hoop_pos[2]:
             # Missed hoop
             return True
 
@@ -294,33 +303,6 @@ class HERBallerSupervisor(BallerSupervisor):
             "desired_goal": self.hoop.getPosition(),
         }
 
-    def is_done(self):
-        return super().is_done()
-        if not self.released_ball:
-            return False
-
-        while super(Supervisor, self).step(self.timestep) != -1:
-            ball_pos = self.ball.getPosition()
-
-            if self.is_ball_passing():
-                # Hit the hoop
-                return True
-
-            if self.was_higher_than_hoop and ball_pos[2] < self.hoop.getPosition()[2]:
-                # Missed hoop
-                return True
-
-            # ball_vel = self.ball.getVelocity()
-            # if not self.was_higher_than_hoop and self.released_ball and ball_vel[2] < 0:
-            #     # Wasnt high enough
-            #     return True
-
-            if ball_pos[2] <= 0.2:
-                # Hit ground
-                return True
-
-        return True
-
     def get_info(self):
         return {
             "ball_last_dist": self.ball_last_dist,
@@ -331,7 +313,7 @@ class HERBallerSupervisor(BallerSupervisor):
         ball_pos = np.asarray(self.ball.getPosition())
         ball_vel = np.asarray(self.ball.getVelocity()[:3])
         hoop_pos = np.asarray(self.hoop.getPosition())
-        dist = -np.linalg.norm(hoop_pos - ball_pos)
+        dist = np.linalg.norm(hoop_pos - ball_pos)
 
         # if self.released_ball:
         #     while super(Supervisor, self).step(self.timestep) != -1:
@@ -341,7 +323,7 @@ class HERBallerSupervisor(BallerSupervisor):
         # if self.is_done():
         #     return -dist
 
-        return int(self.is_ball_passing())
+        return -dist if self._is_done(ball_pos, ball_vel, hoop_pos) else 0
         # return self.rew(ball_pos, ball_vel, hoop_pos, self.ball_last_dist)
 
     def rew(
@@ -376,8 +358,8 @@ class HERBallerSupervisor(BallerSupervisor):
 
     def compute_reward(self, achieved_goal, desired_goal, info):
         return np.asarray(
-            [int(self._is_ball_passing(ball, hoop))
-             for ball, hoop in zip(achieved_goal, desired_goal)]
+            [-np.linalg.norm(desired_goal - achieved_goal) if self._is_done(ball, info["ball_vel"], hoop) else 0
+             for ball, hoop, info in zip(achieved_goal, desired_goal, info)]
         )
         # return np.asarray(
         #     [self.rew(
@@ -390,8 +372,6 @@ class HERBallerSupervisor(BallerSupervisor):
 
 
 def train_her():
-    from stable_baselines3 import HerReplayBuffer, DDPG, DQN, SAC, TD3
-
     env = HERBallerSupervisor()
     env = TimeLimit(env, TIME_LIMIT)
 
@@ -409,12 +389,10 @@ def train_her():
     # numberSteps = 50_000
     # model_path = f"./models/baller_{numberSteps}_steps"
 
-    from stable_baselines3 import SAC
-    model_class = SAC  # works also with SAC, DDPG and TD3
+    model_class = TD3  # works also with SAC, DDPG and TD3
     if CONTINUE_TRAINING:
         model = model_class.load(model_path, env=env, tensorboard_log="./logs/her")
     else:
-        from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
         action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(env.action_space.shape[0]),
                                          sigma=0.1 * np.ones(env.action_space.shape[0]))
         # Initialize the model
@@ -455,9 +433,8 @@ def train_PPO():
     if CONTINUE_TRAINING:
         model = TD3.load(model_path, env=env, tensorboard_log="./logs/")
     else:
-        from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
         action_noise = NormalActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
-        model = DDPG("MlpPolicy", env, action_noise=action_noise, tensorboard_log="./logs/", verbose=1)
+        model = SAC("MlpPolicy", env, action_noise=action_noise, tensorboard_log="./logs/", verbose=1)
 
     # Start/Continue training
     model.learn(
@@ -471,74 +448,32 @@ def train_PPO():
     return model
 
 
+def fun(model_class, model_path: str, env_class):
+    env = env_class()
+    env = TimeLimit(env, TIME_LIMIT)
+
+    model = model_class.load(model_path, env=env, tensorboard_log="./logs/")
+    env = model.get_env()
+
+    obs = env.reset()
+    while True:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, _, _, _ = env.step(action)
+
+
+TRAINING = True
+MODEL_TO_LOAD = (SAC, "./models/baller_150000_steps", BallerSupervisor)
+# MODEL_TO_LOAD = (SAC, "./models/final_her_sac", HERBallerSupervisor)
 CONTINUE_TRAINING = False
-TRAIN_PPO = False
+TRAIN_PPO = True
 
 TIME_LIMIT = 1_000
 
-if TRAIN_PPO:
-    train_PPO()
+
+if TRAINING:
+    if TRAIN_PPO:
+        train_PPO()
+    else:
+        train_her()
 else:
-    train_her()
-
-exit()
-
-
-env = BallerSupervisor()
-model = PPO("MlpPolicy", env, verbose=1)
-model.learn(total_timesteps=10_000)
-
-exit()
-
-env = BallerSupervisor()
-print(env.get_observations())
-while env.step([1, 0,0,0,0]) != -1:
-    print(env.get_observations())
-
-
-
-
-solved = False
-episode_count = 0
-episode_limit = 2000
-# Run outer loop until the episodes limit is reached or the task is solved
-while not solved and episode_count < episode_limit:
-    observation = env.reset()  # Reset robot and get starting observation
-    env.episode_score = 0
-
-    for step in range(env.steps_per_episode):
-        # In training mode the agent samples from the probability distribution, naturally implementing exploration
-        selected_action, action_prob = agent.work(observation, type_="selectAction")
-        # Step the supervisor to get the current selected_action's reward, the new observation and whether we reached
-        # the done condition
-        new_observation, reward, done, info = env.step([selected_action])
-
-        # Save the current state transition in agent's memory
-        trans = Transition(observation, selected_action, action_prob, reward, new_observation)
-        agent.store_transition(trans)
-
-        if done:
-            # Save the episode's score
-            env.episode_score_list.append(env.episode_score)
-            agent.train_step(batch_size=step + 1)
-            solved = env.solved()  # Check whether the task is solved
-            break
-
-        env.episode_score += reward  # Accumulate episode reward
-        observation = new_observation  # observation for next step is current step's new_observation
-
-    print("Episode #", episode_count, "score:", env.episode_score)
-    episode_count += 1  # Increment episode counter
-
-if not solved:
-    print("Task is not solved, deploying agent for testing...")
-elif solved:
-    print("Task is solved, deploying agent for testing...")
-
-observation = env.reset()
-env.episode_score = 0.0
-while True:
-    selected_action, action_prob = agent.work(observation, type_="selectActionMax")
-    observation, _, done, _ = env.step([selected_action])
-    if done:
-        pass
+    fun(*MODEL_TO_LOAD)
