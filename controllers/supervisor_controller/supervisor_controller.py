@@ -15,6 +15,13 @@ JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 4)]
 HAND_NAMES = [f"finger_{i}_joint_1" for i in [1, 2, "middle"]]
 HAND_SENSOR_NAMES = [f"finger_{i}_joint_1_sensor" for i in [1, 2, "middle"]]
 
+ACTION_SCALE = [
+    (-4, 4),
+    (-4, 0),
+    (-4, 0),
+    (-4, 0),
+]
+
 # TODO:
 # - parar o robo depois de lançar e só simular bola?
 
@@ -24,7 +31,8 @@ def rew_shaped(
     ball_vel: list[float],
     hoop_pos: list[float],
     ball_last_dist: float,
-):
+    passing_radius: float,
+) -> float:
     ball_pos = np.asarray(ball_pos)
     ball_vel = np.asarray(ball_vel)
     hoop_pos = np.asarray(hoop_pos)
@@ -42,7 +50,7 @@ def rew_shaped(
     r_time = -0.01
 
     # Success boost
-    passed_hoop = is_ball_passing(ball_pos, hoop_pos)
+    passed_hoop = is_ball_passing(ball_pos, hoop_pos, passing_radius)
 
     reward = 10 * r_dd + 0.5 * r_vel + r_time + passed_hoop
     print(f"{r_dd=}, {r_vel=}, {reward=}")
@@ -54,7 +62,7 @@ def rew_sparse(
     ball_vel: list[float],
     hoop_pos: list[float],
     passing_radius: float,
-):
+) -> float:
     ball_pos = np.asarray(ball_pos)
     ball_vel = np.asarray(ball_vel)
     hoop_pos = np.asarray(hoop_pos)
@@ -67,7 +75,7 @@ def rew_sparse_dist(
     ball_vel: list[float],
     hoop_pos: list[float],
     passing_radius: float,
-):
+) -> float:
     ball_pos = np.asarray(ball_pos)
     ball_vel = np.asarray(ball_vel)
     hoop_pos = np.asarray(hoop_pos)
@@ -76,7 +84,7 @@ def rew_sparse_dist(
     return -dist if is_done(ball_pos, ball_vel, hoop_pos, passing_radius) else 0
 
 
-def is_done(ball_pos: list[float], ball_vel: list[float], hoop_pos: list[float], passing_radius: float):
+def is_done(ball_pos: list[float], ball_vel: list[float], hoop_pos: list[float], passing_radius: float) -> bool:
     if is_ball_passing(ball_pos, hoop_pos, passing_radius):
         # Hit the hoop
         return True
@@ -97,7 +105,7 @@ def is_done(ball_pos: list[float], ball_vel: list[float], hoop_pos: list[float],
     return False
 
 
-def is_ball_passing(ball_center: list[float], hoop_center: list[float], passing_radius: float):
+def is_ball_passing(ball_center: list[float], hoop_center: list[float], passing_radius: float) -> bool:
     # Compute distance between ball center and passing zone center (XY distance)
     dist = np.sqrt((ball_center[0] - hoop_center[0]) ** 2 +
                    (ball_center[1] - hoop_center[1]) ** 2)
@@ -106,32 +114,22 @@ def is_ball_passing(ball_center: list[float], hoop_center: list[float], passing_
     return dist <= passing_radius and abs(ball_center[2] - hoop_center[2]) < 0.05  # Allowing small Z tolerance
 
 
+def to_unit(x: float | np.ndarray, a: float, b: float) -> float | np.ndarray:
+    return 2 * (x - a) / (b - a) - 1
+
+
+def from_unit(x: float | np.ndarray, a: float, b: float) -> float | np.ndarray:
+    return ((x + 1) / 2) * (b - a) + a
+
+
 class BallerSupervisor(RobotSupervisorEnv):
     def __init__(self, rew_fun: Callable, timestep: int | None=None):
         super().__init__(timestep=timestep)
 
         self.rew_fun = rew_fun
 
-        # self.observation_space = gym.spaces.Box(-3, 3, (14,))
-        # self.action_space = gym.spaces.Box(-1, 1, (6,))
-        low = np.array([
-            -10.0, -10.0, -10.0, # rel_pos
-            -2.792, -3.9369, -0.7854, # -1.9198, -1.7453, # joints
-            0.0495, 0.0495, 0.0495, # hand joints
-            -10.0, -10.0, -10.0, # ball acceleration
-            -10.0, -10.0, -10.0, # ball velocity
-        ])
-        high = np.array([
-            10.0, 10.0, 10.0, # rel_pos
-            2.792, 0.7854, 3.9269, # 2.967, 1.7453, # joints
-            1.2218, 1.2218, 1.2218, # hand joints
-            10.0, 10.0, 10.0, # ball acceleration
-            10.0, 10.0, 10.0, # ball velocity
-        ])
-        self.observation_space = gym.spaces.Box(low, high)
-        low = np.array([-4] * 4)
-        high = np.array([4, 0, 0, 0])
-        self.action_space = gym.spaces.Box(low, high)
+        self.observation_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(15,), dtype=np.float32)
+        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
 
         self.timestep = int(self.getBasicTimeStep())
         self.robot = self.getSelf()  # Grab the robot reference from the supervisor to access various robot methods
@@ -181,26 +179,31 @@ class BallerSupervisor(RobotSupervisorEnv):
     def get_observations(self):
         obs = []
 
-        ball_pos = self.ball.getPosition()
-        hoop_pos = self.hoop.getPosition()
+        ball_pos = np.asarray(self.ball.getPosition())
+        hoop_pos = np.asarray(self.hoop.getPosition())
 
         # Relative pos
-        relative_pos = [hoop_pos[i] - ball_pos[i] for i in range(len(hoop_pos))]
+        relative_pos = hoop_pos - ball_pos
+        relative_pos = to_unit(relative_pos, -5, 5)
         obs.extend(relative_pos)
 
         # Joint angles
-        for sensor in self.joint_sensors:
-            obs.append(sensor.getValue())
+        for sensor, motor in zip(self.joint_sensors, self.joints):
+            value = sensor.getValue()
+            scaled = to_unit(value, motor.min_position, motor.max_position)
+            obs.append(scaled)
 
         # Hand angles
-        for sensor in self.hand_sensors:
-            obs.append(sensor.getValue())
+        for sensor, motor in zip(self.hand_sensors, self.hand):
+            value = sensor.getValue()
+            scaled = to_unit(value, motor.min_position, motor.max_position)
+            obs.append(scaled)
 
         # Ball Acceleration and Velocity
         ball_cur_vel = np.array(self.ball.getVelocity()[:3])
         ball_accel = (ball_cur_vel - self.ball_last_vel) / self.timestep
-        obs.extend(ball_accel)
-        obs.extend(ball_cur_vel)
+        obs.extend(to_unit(ball_accel, -0.5, 0.5))
+        obs.extend(to_unit(ball_cur_vel, -5, 5))
 
         # Update ball min distance
         dist = np.linalg.norm(relative_pos)
@@ -208,6 +211,7 @@ class BallerSupervisor(RobotSupervisorEnv):
             self.closest_dist = dist # TODO: see if there is a way to improve this
             self.closest_pos = ball_pos
 
+        print("Obs:", obs)
         return obs
 
     def get_default_observation(self):
@@ -219,7 +223,7 @@ class BallerSupervisor(RobotSupervisorEnv):
         hoop_pos = np.asarray(self.hoop.getPosition())
 
         if self.rew_fun == "shaped":
-            return rew_shaped(ball_pos, ball_vel, hoop_pos, self.ball_last_dist)
+            return rew_shaped(ball_pos, ball_vel, hoop_pos, self.ball_last_dist, self.passing_radius)
         elif self.rew_fun == "sparse":
             return rew_sparse(ball_pos, ball_vel, hoop_pos, self.passing_radius)
         elif self.rew_fun == "sparse_dist":
@@ -273,11 +277,12 @@ class BallerSupervisor(RobotSupervisorEnv):
 
         # Set joint velocities
         for i in range(len(self.joints)):
+            vel = from_unit(action[i], *ACTION_SCALE[i])
             self.joints[i].setPosition(float("inf"))
-            self.joints[i].setVelocity(action[i])
+            self.joints[i].setVelocity(vel)
 
         # Release ball
-        release_ball = action[-1]
+        release_ball = from_unit(action[-1], *ACTION_SCALE[-1])
         for i in range(len(self.hand)):
             self.hand[i].setPosition(float("inf"))
             self.hand[i].setVelocity(release_ball)
@@ -396,7 +401,7 @@ def train_her():
     return model
 
 def train_PPO():
-    env = BallerSupervisor()
+    env = BallerSupervisor("shaped")
     env = TimeLimit(env, TIME_LIMIT)
 
     # Set up callbacks
