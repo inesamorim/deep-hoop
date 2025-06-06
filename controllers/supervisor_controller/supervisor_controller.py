@@ -4,7 +4,6 @@ from deepbots.supervisor.controllers.robot_supervisor_env import RobotSupervisor
 from stable_baselines3 import PPO, DDPG, TD3
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList, EvalCallback
 from gym.wrappers import TimeLimit
-
 from controller import PositionSensor, Motor, Supervisor
 
 JOINT_NAMES = [f"joint{i}" for i in range(1, 4)]
