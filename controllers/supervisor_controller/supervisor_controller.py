@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Callable
 import os
 
@@ -72,9 +73,6 @@ DIFFICULTIES = [
         ),
     ),
 ]
-
-# TODO:
-# - parar o robo depois de lançar e só simular bola?
 
 
 def rew_shaped(
@@ -288,31 +286,39 @@ class BallerSupervisor(RobotSupervisorEnv):
         return False
 
     def get_info(self):
-        return {}
+        hoop_pos = np.asarray(self.hoop.getPosition())
+        ball_pos = np.asarray(self.ball.getPosition())
+        dist = np.linalg.norm(hoop_pos - ball_pos)
+        ball_vel = np.asarray(self.ball.getVelocity()[:3])
+
+        return {
+            "is_success": self.is_ball_passing(),
+            "distance_to_goal": dist,
+            "released_ball": self.released_ball,
+            "ball_vel_norm": np.linalg.norm(ball_vel),
+        }
 
     def render(self, mode='human'):
         pass
 
     def apply_action(self, action):
         print("Action:", action)
-        if self.ball.getPosition()[2] >= self.hoop.getPosition()[2]:
+
+        ball_pos = np.asarray(self.ball.getPosition())
+        hoop_pos = np.asarray(self.hoop.getPosition())
+        hand_pos = np.asarray(self.getFromDef("HAND").getPosition())
+
+        if ball_pos[2] >= hoop_pos[2]:
             self.was_higher_than_hoop = True
 
         # Check if released ball
-        ball_pos = self.ball.getPosition()
-        hand_pos = self.getFromDef("HAND").getPosition()
-        if 0.2 < np.sqrt((ball_pos[0] - hand_pos[0]) ** 2 +
-                    (ball_pos[1] - hand_pos[1]) ** 2 +
-                    (ball_pos[2] - hand_pos[2]) ** 2):
+        if np.linalg.norm(ball_pos - hand_pos) > 0.2:
             self.released_ball = True
 
         # Update ball velocity
         # yes this must be done here
         self.ball_last_vel = np.asarray(self.ball.getVelocity()[:3])
-        ball_pos = np.asarray(self.ball.getPosition())
-        hoop_pos = np.asarray(self.hoop.getPosition())
-        rel_pos = hoop_pos - ball_pos
-        self.ball_last_dist = np.linalg.norm(rel_pos)
+        self.ball_last_dist = np.linalg.norm(hoop_pos - ball_pos)
 
         # Set joint velocities
         for i in range(len(self.joints)):
@@ -393,7 +399,7 @@ class HERBallerSupervisor(BallerSupervisor):
         return self.get_observations()
 
     def get_info(self):
-        return {
+        return super().get_info() | {
             "ball_last_dist": self.ball_last_dist,
             "ball_vel": self.ball.getVelocity()[:3],
             "passing_radius": self.passing_radius,
@@ -420,13 +426,16 @@ class HERBallerSupervisor(BallerSupervisor):
 
 
 class CurriculumCallback(BaseCallback):
-    def __init__(self, eval_env, threshold: float, eval_freq: int, max_difficulty: int, verbose: int=0):
+    def __init__(self, eval_env, threshold: float, eval_freq: int, max_difficulty: int, starting_difficulty: int = 0, verbose: int=0):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.threshold = threshold
         self.eval_freq = eval_freq
         self.max_difficulty = max_difficulty
-        self.current_difficulty = 0
+        self.current_difficulty = starting_difficulty
+
+    def _on_training_start(self):
+        self.logger.record("curriculum/difficulty", self.current_difficulty)
 
     def _on_step(self) -> bool:
         # Evaluate every 5000 steps
@@ -458,12 +467,73 @@ class CurriculumCallback(BaseCallback):
         return True
 
 
+class BallerEvalCallback(EvalCallback):
+    def __init__(self, eval_env, *args, **kwargs):
+        super().__init__(eval_env, *args, **kwargs)
+        self.metrics = defaultdict(list)
+
+    def _on_step(self) -> bool:
+        result = super()._on_step()
+
+        if self.n_calls % self.eval_freq == 0:
+            n_episodes = self.n_eval_episodes
+            successes, distances, throw_duration, throw_vel, joint_usage = [], [], [], [], []
+
+            for _ in range(n_episodes):
+                obs = self.eval_env.reset()
+                done = False
+
+                released_ball, ball_vel = [], []
+                joint_use = 0
+
+                while not done:
+                    action, _ = self.model.predict(obs, deterministic=self.deterministic)
+                    joint_use += np.sum(action)
+                    obs, reward, done, info = self.eval_env.step(action)
+
+                    info = info[0]
+                    released_ball.append(info["released_ball"])
+                    ball_vel.append(info["ball_vel_norm"])
+
+                # Extract metrics
+                successes.append(info.get("is_success", 0.0))
+                distances.append(info.get("distance_to_goal", 0.0))
+                joint_usage.append(joint_use)
+
+                released_ball = np.asarray(released_ball)
+                indices = np.where(released_ball == 1)[0]
+                if indices.size > 0:
+                    release_time = indices[0]
+                else:
+                    release_time = len(released_ball)
+                throw_duration.append(release_time)
+
+                throw_vel.append(np.mean(ball_vel[release_time:]) if len(ball_vel) > 0 else 0.0)
+
+            # Compute and log means
+            self.metrics["success_rate"].append(np.mean(successes))
+            self.metrics["avg_distance"].append(np.mean(distances))
+            self.metrics["std_distance"].append(np.std(distances))
+            self.metrics["avg_throw_duration"].append(np.mean(throw_duration))
+            self.metrics["std_throw_duration"].append(np.std(throw_duration))
+            self.metrics["avg_ball_velocity"].append(np.mean(throw_vel))
+            self.metrics["std_ball_velocity"].append(np.std(throw_vel))
+            self.metrics["avg_joint_usage"].append(np.mean(joint_usage))
+            self.metrics["std_joint_usage"].append(np.std(joint_usage))
+
+            if self.logger:
+                for key, val in self.metrics.items():
+                    self.logger.record(f"eval/{key}", val[-1])
+
+        return result
+
+
 def train_her():
     env = HERBallerSupervisor(rew_fun="sparse", )
     env = TimeLimit(env, TIME_LIMIT)
 
     checkpoint_callback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
-    eval_callback = EvalCallback(env, best_model_save_path="./models/her",
+    eval_callback = BallerEvalCallback(env, best_model_save_path="./models/her",
                                  log_path="./logs/her", eval_freq=10_000,
                                  n_eval_episodes=5, deterministic=True,
                                  render=False)
@@ -472,6 +542,7 @@ def train_her():
         threshold=0.5,
         eval_freq=5_000,
         max_difficulty=len(DIFFICULTIES),
+        starting_difficulty=0, # len(DIFFICULTIES)
         verbose=1,
     )
     callback = CallbackList([checkpoint_callback, eval_callback, curriculum_callback])
@@ -526,7 +597,7 @@ def train_PPO():
 
     # Set up callbacks
     checkpoint_callback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
-    eval_callback = EvalCallback(env, best_model_save_path="./models/",
+    eval_callback = BallerEvalCallback(env, best_model_save_path="./models/",
                                  log_path="./logs/", eval_freq=10_000,
                                  n_eval_episodes=5, deterministic=True,
                                  render=False)
@@ -535,6 +606,7 @@ def train_PPO():
         threshold=35,
         eval_freq=5_000,
         max_difficulty=len(DIFFICULTIES),
+        starting_difficulty=0,  # len(DIFFICULTIES)
         verbose=1,
     )
     callback = CallbackList([checkpoint_callback, eval_callback, curriculum_callback])
