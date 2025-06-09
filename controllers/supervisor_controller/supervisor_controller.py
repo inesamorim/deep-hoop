@@ -490,7 +490,7 @@ class BallerEvalCallback(EvalCallback):
 
                 while not done:
                     action, _ = self.model.predict(obs, deterministic=self.deterministic)
-                    joint_use += np.sum(action)
+                    joint_use += np.sum(np.abs(action))
                     obs, reward, done, info = self.eval_env.step(action)
 
                     info = info[0]
