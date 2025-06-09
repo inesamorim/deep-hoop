@@ -21,6 +21,7 @@ JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 4)]
 HAND_NAMES = [f"finger_{i}_joint_1" for i in [1, 2, "middle"]]
 HAND_SENSOR_NAMES = [f"finger_{i}_joint_1_sensor" for i in [1, 2, "middle"]]
 
+#escala normalizada das velocidades angulares das joints - ações
 ACTION_SCALE = [
     (-4, 4),
     (-4, 0),
@@ -30,7 +31,7 @@ ACTION_SCALE = [
 
 @dataclass
 class Difficulty:
-    hoop_pos: gym.spaces.Box
+    hoop_pos: gym.spaces.Box #espaço contínuo para floats com várias dimensões
     hoop_size: gym.spaces.Box
 
 DIFFICULTIES = [
@@ -221,7 +222,7 @@ class BallerSupervisor(RobotSupervisorEnv):
 
         # Relative pos
         relative_pos = hoop_pos - ball_pos
-        relative_pos = to_unit(relative_pos, -5, 5)
+        relative_pos = to_unit(relative_pos, -5, 5) #normalize
         obs.extend(relative_pos)
 
         # Joint angles
