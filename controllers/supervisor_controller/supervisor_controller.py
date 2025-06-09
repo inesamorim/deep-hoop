@@ -436,6 +436,7 @@ class CurriculumCallback(BaseCallback):
         self.current_difficulty = starting_difficulty
 
     def _on_training_start(self):
+        self.training_env.env_method("set_difficulty", self.current_difficulty)
         self.logger.record("curriculum/difficulty", self.current_difficulty)
 
     def _on_step(self) -> bool:
