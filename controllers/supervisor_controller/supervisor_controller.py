@@ -5,6 +5,9 @@ from stable_baselines3 import PPO, DDPG, TD3
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList, EvalCallback
 from gym.wrappers import TimeLimit
 from controller import PositionSensor, Motor, Supervisor
+from tqdm import trange
+import time
+
 
 JOINT_NAMES = [f"joint{i}" for i in range(1, 4)]
 JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 4)]
@@ -82,7 +85,39 @@ class BallerSupervisor(RobotSupervisorEnv):
         self.steps_per_episode = 200  # Max number of steps per episode
         self.episode_score = 0  # Score accumulated during an episode
         self.episode_score_list = []  # A list to save all the episode scores, used to check if task is solved
+        self.current_step = 0
 
+    def step(self, action):
+        self.current_step += 1
+        self.apply_action(action)
+        self.simulationStep()
+
+        obs = self.get_observations()
+        reward = self.get_reward(action)
+        done = self.is_done()
+
+        ball_pos = self.ball.getPosition()
+        hoop_pos = self.hoop.getPosition()
+        claw_pos = [s.getValue() for s in self.joint_sensors]
+        claw_vel = [j.getVelocity() for j in self.joints]
+
+        info = {
+            "ball_position": ball_pos,
+            "hoop_center": hoop_pos,
+            "claw_position": claw_pos,
+            "claw_velocity": claw_vel,
+            "ball_released": self.released_ball,
+            "scored": self.is_ball_passing(),
+            "closest_distance": self.closest_dist,
+            "ball_velocity": self.ball.getVelocity()[:3],
+            "ball_acceleration": (
+                        (np.array(self.ball.getVelocity()[:3]) - self.ball_last_vel) / self.timestep).tolist(),
+        }
+
+        if info["scored"]:
+            self.passed_hoop = True
+
+        return obs, reward, done, info
 
     def get_observations(self):
         obs = []
@@ -261,6 +296,7 @@ class BallerSupervisor(RobotSupervisorEnv):
         self.closest_dist = 99999
         self.closest_pos = ball_pos
         self.passing_center = hoop_pos
+        self.current_step = 0
 
         return super().reset()
 
@@ -469,6 +505,91 @@ def train_PPO():
     model.save(f"./models/final")
 
     return model
+
+def evaluate_model(env, model, num_episodes=100):
+    success_count = 0
+    distances_to_hoop = []
+    speeds = []
+    accelerations = []
+    times_to_release = []
+    rewards = []
+
+    prev_positions = []
+
+    for ep in trange(num_episodes):
+        obs = env.reset()
+        done = False
+        ball_released = False  #is grabing ball
+        episode_reward = 0
+
+        positions = []
+        velocities = []
+        claw_speeds = []
+        claw_accels = []
+
+        prev_vel = None
+        prev_claw_pos = None
+        release_time = None
+        dist_to_hoop = float('inf')
+
+        start_time = time.time()  #start counting simulation time
+
+        while not done:
+            action = model.predict(obs) if callable(getattr(model, "predict", None)) else model.act(obs)
+            obs, reward, done, info = env.step(action)
+            #obs -> The next observation (state) after taking the action
+            #done -> Boolean flag. True if the episode has ended (e.g., goal achieved or time limit reached)
+            episode_reward += reward
+
+            ###########################MUDAR#############################
+            ball_pos = info.get("ball_position", None)
+            hoop_center = info.get("hoop_center", None)
+            claw_pos = info.get("claw_position", None)
+            claw_vel = info.get("claw_velocity", None)
+
+            if ball_pos and hoop_center:
+                dist = np.linalg.norm(np.array(ball_pos) - np.array(hoop_center))
+                dist_to_hoop = min(dist_to_hoop, dist)
+
+            if claw_pos is not None:
+                if prev_claw_pos is not None:
+                    speed = np.linalg.norm(np.array(claw_pos) - np.array(prev_claw_pos))
+                    claw_speeds.append(speed)
+                    if prev_vel is not None:
+                        accel = speed - prev_vel
+                        claw_accels.append(accel)
+                    prev_vel = speed
+                prev_claw_pos = claw_pos
+
+            if not ball_released and info.get("ball_released", False):
+                ball_released = True
+                release_time = time.time() - start_time
+
+        if info.get("scored", False):
+            success_count += 1
+
+        distances_to_hoop.append(dist_to_hoop)
+        speeds.append(np.mean(claw_speeds) if claw_speeds else 0)
+        accelerations.append(np.mean(claw_accels) if claw_accels else 0)
+        times_to_release.append(release_time if release_time else time.time() - start_time)
+        rewards.append(episode_reward)
+
+    metrics = {
+        "success_rate": success_count / num_episodes,
+        "mean_distance_to_hoop": np.mean(distances_to_hoop),
+        "std_distance_to_hoop": np.std(distances_to_hoop),
+        "mean_speed": np.mean(speeds),
+        "std_speed": np.std(speeds),
+        "mean_acceleration": np.mean(accelerations),
+        "std_acceleration": np.std(accelerations),
+        "mean_release_time": np.mean(times_to_release),
+        "std_release_time": np.std(times_to_release),
+        "reward_mean": np.mean(rewards),
+        "reward_variance": np.var(rewards),
+    }
+
+    return metrics
+
 
 
 CONTINUE_TRAINING = False
