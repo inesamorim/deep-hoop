@@ -40,6 +40,8 @@ This setup enables systematic training (with checkpoints & TensorBoard), curricu
 
 ## Installation
 
+This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating systems but newer version should also work.
+
 1. **Clone the repository**
 
    ```bash
@@ -71,10 +73,10 @@ This setup enables systematic training (with checkpoints & TensorBoard), curricu
 1. **Open the Webots world**
 
    ```bash
-   webots worlds/hoop_throw.wbt
+   webots worlds/PUMA560_new.wbt
    ```
 2. **Run the supervisor controller**
-   In the Webots GUI, select the `supervisor_controller.py` as your controller for the `Supervisor` node.
+   In the Webots GUI, select `extern` as your controller for the `PUMA 560` node.
 
 ### Training
 
@@ -84,8 +86,8 @@ At the top of `supervisor_controller.py`, you can switch the training algorithm 
 
 During training, checkpoints and logs are stored as follows:
 
-* **Models:** Saved every 50,000 steps to `./models/` with filenames formatted as `<algo>_<rew_fun>_step_<n>.zip`.
-* **TensorBoard logs:** Written to `./logs/`, in subdirectories named after each run (e.g., `ppo_shaped`).
+* **Models:** Saved every 50,000 steps to `./models/` with filenames formatted as `mode_<n>_steps.zip`.
+* **TensorBoard logs:** Written to `./logs/`, in subdirectories named after each run (e.g., `ppo_<run id>`).
 
 ### Evaluation
 
