@@ -4,6 +4,7 @@ from itertools import product, combinations
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing import event_accumulator
 from tqdm.auto import tqdm
@@ -160,7 +161,7 @@ def plot_dual_x_groups(
     _plot_runs(ax2, ax3, group2_runs, group2_label, f"{group2_label} Timesteps")
 
     # Y-axis & title
-    metric_name = mean_tag.split('/')[1]
+    metric_name = mean_tag.split('/')[1].replace('_', ' ').capitalize()
     if twin_y:
         ax1.set_ylabel(f"{group1_label} {metric_name}")
         ax3.set_ylabel(f"{group2_label} {metric_name}")
@@ -180,39 +181,153 @@ def plot_dual_x_groups(
     plt.savefig(save_path, dpi=dpi)
 
 
-# === Example Usage ===
+def plot_eval_bar_groups(
+    eval_root: str,
+    group1: list[str],
+    group2: list[str] = None,
+    metric_tag1: str = "eval/success_rate",
+    std_tag1: str = None,
+    metric_tag2: str = None,
+    std_tag2: str = None,
+    title: str = "Evaluation Metrics",
+    twin_y: bool = False,
+    label1: str = "Group 1",
+    label2: str = "Group 2",
+    color1: str = "royalblue",
+    color2: str = "crimson",
+    save_path: str = None,
+    dpi: int = 300
+):
+    def get_stats(configs, tag, std_tag):
+        labels, means, stds = [], [], []
+        for cfg in configs:
+            folder = os.path.join(eval_root, cfg)
+            event_files = sorted(glob.glob(os.path.join(folder, "**/events.out.tfevents.*"), recursive=True))
+            if not event_files:
+                print(f"[!] No TB files in {folder}")
+                continue
+
+            mean_df = load_scalar_all_files(event_files, tag)
+            if mean_df is None or mean_df.empty:
+                print(f"[!] No values for '{tag}' in {cfg}")
+                continue
+
+            mean_val = mean_df["value"].mean()
+            std_val = 0.0
+            if std_tag:
+                std_df = load_scalar_all_files(event_files, std_tag)
+                if std_df is not None and not std_df.empty:
+                    std_val = std_df["value"].mean()
+
+            labels.append(cfg.replace("_", " "))
+            means.append(mean_val)
+            stds.append(std_val)
+        return labels, means, stds
+
+    if group2 is None:
+        group2 = []
+
+    metric_tag2 = metric_tag2 or metric_tag1
+    std_tag2 = std_tag2 or std_tag1
+
+    labels1, means1, stds1 = get_stats(group1, metric_tag1, std_tag1)
+    labels2, means2, stds2 = get_stats(group2, metric_tag2, std_tag2)
+
+    if not labels1 and not labels2:
+        print("[!] No valid data to plot.")
+        return
+
+    x1 = np.arange(len(labels1))
+    x2 = np.arange(len(labels1), len(labels1) + len(labels2))
+
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+    ax1.bar(x1, means1, yerr=stds1 if std_tag1 else None, capsize=6,
+            color=color1, edgecolor="black", alpha=0.9, label=label1)
+    ax1.set_xticks(np.concatenate([x1, x2]))
+    ax1.set_xticklabels(labels1 + labels2)
+    ax1.set_ylabel(metric_tag1.split("/")[-1].replace("_", " ").capitalize(), color=color1)
+    ax1.tick_params(axis="y", colors=color1)
+
+    if twin_y and labels2:
+        ax2 = ax1.twinx()
+        ax2.bar(x2, means2, yerr=stds2 if std_tag2 else None, capsize=6,
+                color=color2, edgecolor="black", alpha=0.9, label=label2)
+        ax2.set_ylabel(metric_tag2.split("/")[-1].replace("_", " ").capitalize(), color=color2)
+        ax2.tick_params(axis="y", colors=color2)
+    elif not twin_y and labels2:
+        ax1.bar(x2, means2, yerr=stds2 if std_tag2 else None, capsize=6,
+                color=color2, edgecolor="black", alpha=0.9, label=label2)
+
+    ax1.set_title(title)
+    ax1.grid(True, axis="y", linestyle="--", alpha=0.5)
+    fig.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=dpi)
+        print(f"[✓] Saved to {save_path}")
+
+
 base_path = "./controllers/supervisor_controller/logs/paper"
 ppo_runs = ["PPO_with_curriculum", "PPO_without_curriculum"]
 sac_runs = ["SAC_with_curriculum", "SAC_without_curriculum"]
 her_runs = ["HER_with_curriculum", "HER_without_curriculum"]
+
+eval_metrics = [
+    ("avg_ball_velocity", "std_ball_velocity", False),
+    ("avg_distance", "std_distance", False),
+    ("avg_joint_usage", "std_joint_usage", False),
+    ("avg_throw_duration", "std_throw_duration", False),
+    ("mean_ep_length", None, False),
+    ("mean_reward", None, True),
+    ("success_rate", None, False),
+    ("avg_max_height", "std_max_height", False),
+]
+
+for metric, std, twin in eval_metrics:
+    plot_eval_bar_groups(
+        eval_root="./controllers/supervisor_controller/evaluation/",
+        group1=["ppo_with_curriculum", "ppo_without_curriculum", "sac_with_curriculum", "sac_without_curriculum"],
+        group2=["her_with_curriculum", "her_without_curriculum"],
+        metric_tag1=f"eval/{metric}",
+        std_tag1=f"eval/{std}" if std is not None else None,
+        title=f"{metric.replace('_', ' ').capitalize()} of different models",
+        color1="royalblue",
+        color2="crimson" if twin else "royalblue",
+        save_path=f"figs/trained/{metric}.png",
+        twin_y=twin,
+    )
+
+train_metrics = [
+    ("eval/avg_ball_velocity", "eval/std_ball_velocity", False),
+    ("eval/avg_distance", "eval/std_distance", False),
+    # ("eval/avg_joint_usage", "eval/std_joint_usage", False),  # pedro messed up this one during training :P
+    ("eval/avg_throw_duration", "eval/std_throw_duration", False),
+    ("eval/mean_ep_length", None, False),
+    ("eval/mean_reward", None, True),
+    ("eval/success_rate", None, False),
+    # ("eval/avg_max_height", "eval/std_max_height", False),
+    ("rollout/ep_rew_mean", None, True),
+    ("rollout/ep_len_mean", None, False),
+]
 
 all_combinations = product(
     combinations(
         zip(["PPO", "SAC", "HER"], [ppo_runs, sac_runs, her_runs]),
         2,
     ),
-    [
-        ("avg_ball_velocity", "std_ball_velocity", False),
-        ("avg_distance", "std_distance", False),
-        # ("avg_joint_usage", "std_joint_usage", False),  # pedro messed up this one during training :P
-        ("avg_throw_duration", "std_throw_duration", False),
-        ("mean_ep_length", None, False),
-        ("mean_reward", None, True),
-        ("success_rate", None, False),
-    ]
+    train_metrics,
 )
 
 for ((tag1, run1), (tag2, run2)), (metric, std, twin_y) in tqdm(all_combinations):
-        plot_dual_x_groups(
-            base_path,
-            run1,
-            run2,
-            group1_label=tag1,
-            group2_label=tag2,
-            mean_tag=f"eval/{metric}",
-            std_tag=f"eval/{std}" if std is not None else None,
-            save_path=f"figs/{metric}/{tag1}_vs_{tag2}.png",
-            twin_y=twin_y,
-            # group1_y_label=f"{tag1} {metric}",
-            # group2_y_label=f"{tag2} {metric}",
-        )
+    plot_dual_x_groups(
+        base_path,
+        run1,
+        run2,
+        group1_label=tag1,
+        group2_label=tag2,
+        mean_tag=metric,
+        std_tag=std,
+        save_path=f"figs/{metric.split('/')[-1]}/{tag1}_vs_{tag2}.png",
+        twin_y=twin_y,
+    )
