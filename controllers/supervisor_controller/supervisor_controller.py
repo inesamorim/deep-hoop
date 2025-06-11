@@ -1,6 +1,8 @@
 from collections import defaultdict
+from pathlib import Path
 from typing import Callable
 import os
+import glob
 
 import gym
 import numpy as np
@@ -13,15 +15,16 @@ from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
 from dataclasses import dataclass
+from stable_baselines3.common.logger import configure
 
-from controller import PositionSensor, Motor, Supervisor
+from controller import PositionSensor, Motor, Supervisor, Robot
 
 JOINT_NAMES = [f"joint{i}" for i in range(1, 4)]
 JOINT_SENSOR_NAMES = [f"joint{i}_sensor" for i in range(1, 4)]
 HAND_NAMES = [f"finger_{i}_joint_1" for i in [1, 2, "middle"]]
 HAND_SENSOR_NAMES = [f"finger_{i}_joint_1_sensor" for i in [1, 2, "middle"]]
 
-#escala normalizada das velocidades angulares das joints - ações
+# escala normalizada das velocidades angulares das joints - ações
 ACTION_SCALE = [
     (-4, 4),
     (-4, 0),
@@ -29,10 +32,12 @@ ACTION_SCALE = [
     (-4, 0),
 ]
 
+
 @dataclass
 class Difficulty:
-    hoop_pos: gym.spaces.Box #espaço contínuo para floats com várias dimensões
+    hoop_pos: gym.spaces.Box  # espaço contínuo para floats com várias dimensões
     hoop_size: gym.spaces.Box
+
 
 DIFFICULTIES = [
     Difficulty(
@@ -77,11 +82,11 @@ DIFFICULTIES = [
 
 
 def rew_shaped(
-    ball_pos: list[float],
-    ball_vel: list[float],
-    hoop_pos: list[float],
-    ball_last_dist: float,
-    passing_radius: float,
+        ball_pos: list[float],
+        ball_vel: list[float],
+        hoop_pos: list[float],
+        ball_last_dist: float,
+        passing_radius: float,
 ) -> float:
     ball_pos = np.asarray(ball_pos)
     ball_vel = np.asarray(ball_vel)
@@ -103,23 +108,23 @@ def rew_shaped(
     passed_hoop = is_ball_passing(ball_pos, hoop_pos, passing_radius)
 
     reward = 0 * r_dd + 0.5 * r_vel + r_time + 10 * passed_hoop
-    print(f"{r_dd=}, {r_vel=}, {passed_hoop=}, {reward=}")
+    # print(f"{r_dd=}, {r_vel=}, {passed_hoop=}, {reward=}")
     return reward
 
 
 def rew_sparse(
-    ball_pos: list[float],
-    hoop_pos: list[float],
-    passing_radius: float,
+        ball_pos: list[float],
+        hoop_pos: list[float],
+        passing_radius: float,
 ) -> float:
     return 1 if is_ball_passing(ball_pos, hoop_pos, passing_radius) else 0
 
 
 def rew_sparse_dist(
-    ball_pos: list[float],
-    ball_vel: list[float],
-    hoop_pos: list[float],
-    passing_radius: float,
+        ball_pos: list[float],
+        ball_vel: list[float],
+        hoop_pos: list[float],
+        passing_radius: float,
 ) -> float:
     ball_pos = np.asarray(ball_pos)
     ball_vel = np.asarray(ball_vel)
@@ -163,7 +168,7 @@ def from_unit(x: float | np.ndarray, a: float, b: float) -> float | np.ndarray:
 
 
 class BallerSupervisor(RobotSupervisorEnv):
-    def __init__(self, rew_fun: str, timestep: int | None=None):
+    def __init__(self, rew_fun: str, timestep: int | None = None):
         super().__init__(timestep=timestep)
 
         self.rew_fun = rew_fun
@@ -222,7 +227,7 @@ class BallerSupervisor(RobotSupervisorEnv):
 
         # Relative pos
         relative_pos = hoop_pos - ball_pos
-        relative_pos = to_unit(relative_pos, -5, 5) #normalize
+        relative_pos = to_unit(relative_pos, -5, 5)  # normalize
         obs.extend(relative_pos)
 
         # Joint angles
@@ -246,10 +251,10 @@ class BallerSupervisor(RobotSupervisorEnv):
         # Update ball min distance
         dist = np.linalg.norm(relative_pos)
         if dist < self.closest_dist:
-            self.closest_dist = dist # TODO: see if there is a way to improve this
+            self.closest_dist = dist  # TODO: see if there is a way to improve this
             self.closest_pos = ball_pos
 
-        print("Obs:", obs)
+        # print("Obs:", obs)
         return obs
 
     def get_default_observation(self):
@@ -297,13 +302,14 @@ class BallerSupervisor(RobotSupervisorEnv):
             "distance_to_goal": dist,
             "released_ball": self.released_ball,
             "ball_vel_norm": np.linalg.norm(ball_vel),
+            "ball_pos": ball_pos,
         }
 
     def render(self, mode='human'):
         pass
 
     def apply_action(self, action):
-        print("Action:", action)
+        # print("Action:", action)
 
         ball_pos = np.asarray(self.ball.getPosition())
         hoop_pos = np.asarray(self.hoop.getPosition())
@@ -337,15 +343,15 @@ class BallerSupervisor(RobotSupervisorEnv):
         self.was_higher_than_hoop = False
         self.ball_last_vel = np.array([0, 0, 0])
 
-        self.released_ball = False # if robot is still holding the ball
-        self.passed_hoop = False # ball has passed the hoop
+        self.released_ball = False  # if robot is still holding the ball
+        self.passed_hoop = False  # ball has passed the hoop
         self.closest_dist = 99999
 
         # Reset simulation
         obs = super().reset()
 
         # Set hoop pos
-        difficulty =  DIFFICULTIES[self.cur_difficulty]
+        difficulty = DIFFICULTIES[self.cur_difficulty]
         hoop_trans = self.hoop.getField("translation")
         new_pos = difficulty.hoop_pos.sample()
         hoop_trans.setSFVec3f(new_pos.tolist())
@@ -377,6 +383,7 @@ class BallerSupervisor(RobotSupervisorEnv):
         self.passing_center = hoop_pos
 
         return obs
+
 
 class HERBallerSupervisor(BallerSupervisor):
     def __init__(self, rew_fun: str):
@@ -427,7 +434,8 @@ class HERBallerSupervisor(BallerSupervisor):
 
 
 class CurriculumCallback(BaseCallback):
-    def __init__(self, eval_env, threshold: float, eval_freq: int, max_difficulty: int, starting_difficulty: int = 0, verbose: int=0):
+    def __init__(self, eval_env, threshold: float, eval_freq: int, max_difficulty: int, starting_difficulty: int = 0,
+                 verbose: int = 0):
         super().__init__(verbose)
         self.eval_env = eval_env
         self.threshold = threshold
@@ -446,7 +454,7 @@ class CurriculumCallback(BaseCallback):
                 # Already at max difficulty
                 return True
 
-            mean_reward, _ = evaluate_policy(self.model, self.eval_env, n_eval_episodes=5, deterministic=True)
+            mean_reward, _ = evaluate_policy(self.model, self.eval_env, n_eval_episodes=10, deterministic=True)
             if self.verbose > 0:
                 print(f"Eval reward at difficulty {self.current_difficulty}: {mean_reward}")
 
@@ -460,7 +468,8 @@ class CurriculumCallback(BaseCallback):
                     log_dir = self.logger.dir or "./"
                     log_file = os.path.join(log_dir, "curriculum.txt")
                     with open(log_file, "a") as f:
-                        f.write(f"Step {self.num_timesteps}: Increased difficulty to {self.current_difficulty} with eval reward {mean_reward}\n")
+                        f.write(
+                            f"Step {self.num_timesteps}: Increased difficulty to {self.current_difficulty} with eval reward {mean_reward}\n")
 
                 # Update training and evaluation environments
                 self.training_env.env_method("set_difficulty", self.current_difficulty)
@@ -479,13 +488,13 @@ class BallerEvalCallback(EvalCallback):
 
         if self.n_calls % self.eval_freq == 0:
             n_episodes = self.n_eval_episodes
-            successes, distances, throw_duration, throw_vel, joint_usage = [], [], [], [], []
+            successes, distances, throw_duration, throw_vel, joint_usage, max_heights = [], [], [], [], [], []
 
             for _ in range(n_episodes):
                 obs = self.eval_env.reset()
                 done = False
 
-                released_ball, ball_vel = [], []
+                released_ball, ball_vel, ball_heights = [], [], []
                 joint_use = 0
 
                 while not done:
@@ -496,6 +505,7 @@ class BallerEvalCallback(EvalCallback):
                     info = info[0]
                     released_ball.append(info["released_ball"])
                     ball_vel.append(info["ball_vel_norm"])
+                    ball_heights.append(info["ball_pos"])
 
                 # Extract metrics
                 successes.append(info.get("is_success", 0.0))
@@ -510,7 +520,8 @@ class BallerEvalCallback(EvalCallback):
                     release_time = len(released_ball)
                 throw_duration.append(release_time)
 
-                throw_vel.append(np.mean(ball_vel[release_time:]) if len(ball_vel) > 0 else 0.0)
+                throw_vel.append(np.mean(ball_vel[release_time:]) if len(ball_vel[release_time:]) > 0 else 0.0)
+                max_heights.append(np.max(ball_heights))
 
             # Compute and log means
             self.metrics["success_rate"].append(np.mean(successes))
@@ -522,10 +533,13 @@ class BallerEvalCallback(EvalCallback):
             self.metrics["std_ball_velocity"].append(np.std(throw_vel))
             self.metrics["avg_joint_usage"].append(np.mean(joint_usage))
             self.metrics["std_joint_usage"].append(np.std(joint_usage))
+            self.metrics["avg_max_height"].append(np.mean(max_heights))
+            self.metrics["std_max_height"].append(np.std(max_heights))
 
-            if self.logger:
-                for key, val in self.metrics.items():
-                    self.logger.record(f"eval/{key}", val[-1])
+            for key, val in self.metrics.items():
+                self.logger.record(f"eval/{key}", val[-1])
+
+            self.logger.dump(self.num_timesteps)
 
         return result
 
@@ -536,21 +550,21 @@ def train_her():
 
     checkpoint_callback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
     eval_callback = BallerEvalCallback(env, best_model_save_path="./models/her",
-                                 log_path="./logs/her", eval_freq=10_000,
-                                 n_eval_episodes=5, deterministic=True,
-                                 render=False)
+                                       log_path="./logs/her", eval_freq=10_000,
+                                       n_eval_episodes=5, deterministic=True,
+                                       render=False)
     curriculum_callback = CurriculumCallback(
         eval_env=env,
         threshold=0.5,
         eval_freq=5_000,
         max_difficulty=len(DIFFICULTIES),
-        starting_difficulty=0, # len(DIFFICULTIES)
+        starting_difficulty=0,  # len(DIFFICULTIES)
         verbose=1,
     )
     callback = CallbackList([checkpoint_callback, eval_callback, curriculum_callback])
 
     # Available strategies (cf paper): future, final, episode
-    goal_selection_strategy = "final" # equivalent to GoalSelectionStrategy.FUTURE
+    goal_selection_strategy = "final"  # equivalent to GoalSelectionStrategy.FUTURE
 
     model_path = f"./models/baller_100000_steps.zip"
     # numberSteps = 50_000
@@ -560,7 +574,7 @@ def train_her():
     if CONTINUE_TRAINING:
         model = model_class.load(model_path, env=env, tensorboard_log="./logs/her")
     else:
-        action_noise = None # OrnsteinUhlenbeckActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
+        action_noise = None  # OrnsteinUhlenbeckActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
         # Initialize the model
         model = model_class(
             "MultiInputPolicy",
@@ -587,22 +601,15 @@ def train_her():
 
 
 def train_PPO():
-    def make_env():
-        env = BallerSupervisor(rew_fun="shaped")
-        env = TimeLimit(env, TIME_LIMIT)
-        # env = Monitor(env)
-        return env
-
-    # env = DummyVecEnv([make_env])
-    # env = VecNormalize(env, True, norm_obs=False, norm_reward=True)
-    env = make_env()
+    env = BallerSupervisor(rew_fun="shaped")
+    env = TimeLimit(env, TIME_LIMIT)
 
     # Set up callbacks
     checkpoint_callback = CheckpointCallback(save_freq=50_000, save_path=f"./models/", name_prefix="baller")
     eval_callback = BallerEvalCallback(env, best_model_save_path="./models/",
-                                 log_path="./logs/", eval_freq=10_000,
-                                 n_eval_episodes=5, deterministic=True,
-                                 render=False)
+                                       log_path="./logs/", eval_freq=10_000,
+                                       n_eval_episodes=5, deterministic=True,
+                                       render=False)
     curriculum_callback = CurriculumCallback(
         eval_env=env,
         threshold=35,
@@ -621,7 +628,7 @@ def train_PPO():
         VecNormalize.load()
         model = TD3.load(model_path, env=env, tensorboard_log="./logs/")
     else:
-        action_noise = None # NormalActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
+        action_noise = None  # NormalActionNoise(mean=np.zeros(env.action_space.shape[0]), sigma=0.1 * np.ones(env.action_space.shape[0]))
         model = SAC("MlpPolicy", env, action_noise=action_noise, tensorboard_log="./logs/", verbose=1)
         # model = PPO("MlpPolicy", env, tensorboard_log="./logs/", verbose=1)
 
@@ -637,27 +644,72 @@ def train_PPO():
     return model
 
 
-def fun(model_class, model_path: str, env_class):
-    env = env_class("shaped", False)
+def evaluate(
+    algo: str,
+    model_path: str,
+    env_ctor: Callable[..., gym.Env],
+    rew_fun: str,
+    save_path: str,
+    n_eval_episodes: int = 10,
+    deterministic: bool = True,
+    difficulty: int = None,
+):
+    """
+    Load a trained model and evaluate it.
+
+    :param algo: Which algorithm—"her", "sac", "td3", or "ppo".
+    :param model_path: Path to the .zip checkpoint.
+    :param env_ctor: Factory for your env, e.g. lambda **kw: BallerSupervisor(**kw).
+    :param rew_fun: "sparse" or "shaped", passed through to env.
+    :param save_path: Where to write logs (stdout, csv, tensorboard).
+    :param n_eval_episodes: Number of episodes to roll out.
+    :param deterministic: Whether to use deterministic actions.
+    :param difficulty: Index for env.set_difficulty(); defaults to max.
+    """
+    # Instantiate and wrap the env
+    env = env_ctor(rew_fun=rew_fun)
     env = TimeLimit(env, TIME_LIMIT)
+    # set to hardest level by default
+    if difficulty is None:
+        difficulty = len(DIFFICULTIES) - 1
+    env.set_difficulty(difficulty)
 
-    model = model_class.load(model_path, env=env, tensorboard_log="./logs/")
-    env = model.get_env()
+    # Choose and load the model
+    if algo not in MODEL_MAP:
+        raise ValueError(f"Unknown algo '{algo}' – must be one of {list(MODEL_MAP)}")
+    ModelClass = MODEL_MAP[algo]
+    model = ModelClass.load(model_path, env=env)
 
-    obs = env.reset()
-    while True:
-        action, _ = model.predict(obs, deterministic=True)
-        obs, _, _, _ = env.step(action)
+    # Configure logger so we get CSV / TBX / stdout in save_path
+    os.makedirs(save_path, exist_ok=True)
+    new_logger = configure(save_path, ["stdout", "csv", "tensorboard"])
+    model.set_logger(new_logger)
 
+    eval_cb = BallerEvalCallback(
+        env,
+        eval_freq=1,
+        n_eval_episodes=n_eval_episodes,
+        deterministic=deterministic,
+    )
+    # manually bootstrap the callback
+    eval_cb.model = model
+    eval_cb.eval_env = model.get_env()
+    # a fake "step" to trigger evaluation immediately
+    eval_cb._on_step()
 
-TRAINING = True
-MODEL_TO_LOAD = (PPO, "./models/baller_150000_steps", BallerSupervisor)
-# MODEL_TO_LOAD = (SAC, "./models/final_her_sac", HERBallerSupervisor)
+    env.close()
+    del env
+
+    Robot.created = None
+
+TRAINING = False
+
 CONTINUE_TRAINING = False
-TRAIN_PPO = False
+TRAIN_PPO = True
 
 TIME_LIMIT = 1_000
 
+MODEL_MAP = {"her": SAC, "sac": SAC, "ppo": PPO}
 
 if TRAINING:
     if TRAIN_PPO:
@@ -665,4 +717,46 @@ if TRAINING:
     else:
         train_her()
 else:
-    fun(*MODEL_TO_LOAD)
+    ALGOS = ["her", "sac", "ppo"]
+
+    def find_model_path(base_dir: str) -> str:
+        """Return the first baller_*.zip under base_dir, or raise."""
+        matches = glob.glob(os.path.join(base_dir, "baller_*.zip"))
+        if not matches:
+            raise FileNotFoundError(f"No model found in {base_dir}")
+        return matches[0]
+
+
+    for algo in ALGOS:
+        for with_curr in (True, False):
+            flag = "with" if with_curr else "without"
+            model_dir = os.path.join("..", "..", "trained_models", f"{algo}_{flag}_curriculum")
+            try:
+                model_path = find_model_path(model_dir)
+            except FileNotFoundError as e:
+                print(f"Skipping {algo} ({flag}): {e}")
+                continue
+
+            save_path = os.path.join("evaluation", f"{algo}_{flag}_curriculum")
+            os.makedirs(save_path, exist_ok=True)
+
+            # Now call evaluate(); adjust env_ctor and rew_fun per algorithm if needed:
+            if algo == "her":
+                env_ctor = lambda rew_fun: HERBallerSupervisor(rew_fun)
+                rew_fun = "sparse"
+            else:
+                env_ctor = lambda rew_fun: BallerSupervisor(rew_fun)
+                rew_fun = "shaped"
+
+            print(f"\n>> Evaluating {algo} ({'with' if with_curr else 'without'} curriculum)")
+            evaluate(
+                algo=algo,
+                model_path=model_path,
+                env_ctor=env_ctor,
+                rew_fun=rew_fun,
+                save_path=save_path,
+                n_eval_episodes=100,
+                deterministic=True,
+                difficulty=None,  # defaults to max difficulty
+            )
+
