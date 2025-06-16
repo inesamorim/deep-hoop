@@ -44,7 +44,7 @@ def rew_shaped(
     # Success boost
     passed_hoop = is_ball_passing(ball_pos, hoop_pos, passing_radius)
 
-    reward = 0.5 * r_vel + r_time + 10 * passed_hoop
+    reward = 0.5 * r_vel + r_time + 20 * passed_hoop
     return reward
 
 
@@ -128,7 +128,7 @@ class BallerSupervisor(RobotSupervisorEnv):
         super().__init__(timestep=timestep)
 
         self.rew_fun = rew_fun
-        self.cur_difficulty = 0
+        self.cur_difficulty = len(DIFFICULTIES) - 1
 
         self.observation_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(15,), dtype=np.float32

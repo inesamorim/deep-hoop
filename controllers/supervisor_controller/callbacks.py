@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 import os
@@ -5,7 +6,6 @@ import os
 import gym
 import numpy as np
 from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
-from stable_baselines3.common.evaluation import evaluate_policy
 
 
 @dataclass
@@ -68,6 +68,7 @@ class CurriculumCallback(BaseCallback):
         eval_freq: int,
         max_difficulty: int,
         starting_difficulty: int = 0,
+        save_path: str | None = None,
         verbose: int = 0,
     ):
         super().__init__(verbose)
@@ -76,11 +77,15 @@ class CurriculumCallback(BaseCallback):
         self.eval_freq = eval_freq
         self.max_difficulty = max_difficulty
         self.current_difficulty = starting_difficulty
+        self.save_path = save_path
+        self.train_started = False
 
     def _on_training_start(self):
         self.training_env.env_method("set_difficulty", self.current_difficulty)
+        self.eval_env.set_difficulty(self.current_difficulty)
         self.logger.record("curriculum/difficulty", self.current_difficulty)
         self.logger.dump(self.num_timesteps)  # Write to disk
+        self.train_started = True
 
     def _on_step(self) -> bool:
         # Evaluate every 5000 steps
@@ -89,37 +94,47 @@ class CurriculumCallback(BaseCallback):
                 # Already at max difficulty
                 return True
 
-            mean_reward, _ = evaluate_policy(
+            success_rate = eval_policy_success(
                 self.model, self.eval_env, n_eval_episodes=10, deterministic=True
             )
             if self.verbose > 0:
                 print(
-                    f"Eval reward at difficulty {self.current_difficulty}: {mean_reward}"
+                    f"Eval success rate at difficulty {self.current_difficulty}: {success_rate:.2f}"
                 )
 
             # If performance is good, increase difficulty
             if (
-                mean_reward > self.threshold
+                success_rate > self.threshold
                 and self.current_difficulty < self.max_difficulty - 1
             ):
                 self.current_difficulty += 1
                 if self.verbose > 0:
                     # Log difficulty change
                     print(f"Increasing difficulty to {self.current_difficulty}")
-                    self.logger.record("curriculum/difficulty", self.current_difficulty)
+                self.logger.record("curriculum/difficulty", self.current_difficulty)
 
-                    log_dir = self.logger.dir or "./"
-                    log_file = os.path.join(log_dir, "curriculum.txt")
-                    with open(log_file, "a") as f:
-                        f.write(
-                            f"Step {self.num_timesteps}: Increased difficulty to {self.current_difficulty} with eval reward {mean_reward}\n"
-                        )
+                log_dir = self.logger.dir or "./"
+                log_file = os.path.join(log_dir, "curriculum.txt")
+                with open(log_file, "a") as f:
+                    f.write(
+                        f"Step {self.num_timesteps}: Increased difficulty to {self.current_difficulty} with eval reward {success_rate}\n"
+                    )
+
+                if self.save_path is not None:
+                    with open(os.path.join(self.save_path, f'curriculum_latest.json'), 'w') as f:
+                        json.dump({'difficulty': self.current_difficulty}, f)
 
                 # Update training and evaluation environments
                 self.training_env.env_method("set_difficulty", self.current_difficulty)
                 self.eval_env.set_difficulty(self.current_difficulty)
 
         return True
+
+    def set_difficulty(self, difficulty):
+        self.current_difficulty = difficulty
+        if self.train_started:
+            self.training_env.env_method("set_difficulty", self.current_difficulty)
+            self.eval_env.set_difficulty(self.current_difficulty)
 
 
 # Superclass of EvalCallback that records additional metrics
@@ -135,13 +150,12 @@ class BallerEvalCallback(EvalCallback):
         if self.n_calls % self.eval_freq == 0:
             n_episodes = self.n_eval_episodes
             (
-                successes,
                 distances,
                 throw_duration,
                 throw_vel,
                 joint_usage,
                 max_heights,
-            ) = ([], [], [], [], [], [])
+            ) = ([], [], [], [], [])
 
             # Run n episodes
             for _ in range(n_episodes):
@@ -162,10 +176,10 @@ class BallerEvalCallback(EvalCallback):
                     released_ball.append(info["released_ball"])
                     ball_vel.append(info["ball_vel_norm"])
                     ball_heights.append(info["ball_pos"])
-                    joint_use += np.sum(np.abs(action))
+                    if not info["released_ball"]:
+                        joint_use += np.sum(np.abs(action))
 
                 # Extract episode metrics
-                successes.append(info.get("is_success", 0.0))
                 distances.append(info.get("distance_to_goal", 0.0))
                 max_heights.append(np.max(ball_heights))
                 joint_usage.append(joint_use)
@@ -185,7 +199,6 @@ class BallerEvalCallback(EvalCallback):
                 )
 
             # Compute and log means
-            self.metrics["success_rate"].append(np.mean(successes))
             self.metrics["avg_distance"].append(np.mean(distances))
             self.metrics["std_distance"].append(np.std(distances))
             self.metrics["avg_throw_duration"].append(np.mean(throw_duration))
@@ -204,3 +217,20 @@ class BallerEvalCallback(EvalCallback):
             self.logger.dump(self.num_timesteps)
 
         return result
+
+def eval_policy_success(model, env, n_eval_episodes: int = 10, deterministic: bool = True):
+    n_success = 0
+    for _ in range(n_eval_episodes):
+        obs = env.reset()
+        done = False
+
+        while not done:
+            action, _ = model.predict(
+                obs, deterministic=deterministic
+            )
+            obs, reward, done, info = env.step(action)
+
+        if info["is_success"]:
+            n_success += 1
+
+    return n_success / n_eval_episodes
