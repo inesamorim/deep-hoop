@@ -223,7 +223,7 @@ if __name__ == "__main__":
                 use_curriculum=USE_CURRICULUM,
                 n_runs=10,
                 total_timesteps=100_000,
-                base_path=f"../../sac_{'with' if USE_CURRICULUM else 'without'}_curriculum",
+                base_path=f"../../runs/sac_{'with' if USE_CURRICULUM else 'without'}_curriculum",
                 curriculum_threshold=0.5,
             )
         elif TRAIN_ALG == "her":
@@ -235,7 +235,7 @@ if __name__ == "__main__":
                 use_curriculum=USE_CURRICULUM,
                 n_runs=10,
                 total_timesteps=400_000,
-                base_path=f"../../sac_{'with' if USE_CURRICULUM else 'without'}_curriculum",
+                base_path=f"../../runs/her_{'with' if USE_CURRICULUM else 'without'}_curriculum",
                 curriculum_threshold=0.5,
                 her_params={"n_sampled_goal": 4, "goal_selection_strategy": "final"},
             )
