@@ -11,7 +11,6 @@ from stable_baselines3 import PPO, SAC, HerReplayBuffer
 from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 from stable_baselines3.common.logger import configure
 
-from controller import Robot
 from controllers.supervisor_controller.callbacks import (
     BallerEvalCallback,
     CurriculumCallback,
@@ -37,7 +36,7 @@ def get_latest_checkpoint(checkpoint_dir: str | Path, extension: str):
     checkpoints = []
     for f in os.listdir(checkpoint_dir):
         if f.endswith(extension):
-            match = re.search(r'(\d+)', f)
+            match = re.search(r"(\d+)", f)
             if match:
                 checkpoints.append((int(match.group()), f))
 
@@ -51,9 +50,7 @@ def get_latest_checkpoint(checkpoint_dir: str | Path, extension: str):
 
 def train(
     algo: str,
-    env_creator: Callable[
-        [], gym.Env
-    ],
+    env_creator: Callable[[], gym.Env],
     rew_fun: str,
     policy: str = "MlpPolicy",  # or "MultiInputPolicy"
     use_curriculum: bool = True,
@@ -66,31 +63,37 @@ def train(
     seed: int = 0,
 ):
     """
-    Trains a reinforcement learning agent using a specified algorithm and environment.
+    Trains a reinforcement learning agent using the specified algorithm and environment configuration.
 
     Args:
-        algo (str): Name of the RL algorithm to use (must be a key in MODEL_MAP).
-        env_creator (Callable[[], gym.Env]): A function that returns an instance of a Gym environment.
-        rew_fun (str): Identifier for the reward function used by the environment.
-        policy (str, optional): Policy type to use (e.g., "MlpPolicy", "MultiInputPolicy"). Defaults to "MlpPolicy".
-        use_curriculum (bool, optional): Whether to use curriculum learning or not
-        total_timesteps (int, optional): Total number of timesteps for training. Defaults to 1,000,000.
-        time_limit (int, optional): Maximum number of steps per episode (used in TimeLimit wrapper). Defaults to TIME_LIMIT.
-        model_path (str, optional): Path to save or load the model. Defaults to "./models/baller_latest.zip".
-        tensorboard_log (str, optional): Directory for TensorBoard logs. Defaults to "./logs/".
-        continue_training (bool, optional): Whether to continue training from an existing model. Defaults to False.
-        her_params (dict, optional): Parameters specific to Hindsight Experience Replay (HER). Required if algo == "her".
-        curriculum_threshold (float, optional): Performance threshold for progressing in curriculum learning. Defaults to 35.
+        algo (str): The name of the RL algorithm to use (must be a key in MODEL_MAP).
+        env_creator (Callable[[], gym.Env]): A function that returns a Gym environment instance.
+            It must accept a 'rew_fun' argument and return a configured environment.
+        rew_fun (str): Identifier or name of the reward function used by the environment.
+        policy (str, optional): Policy architecture to use (e.g., "MlpPolicy", "MultiInputPolicy"). Defaults to "MlpPolicy".
+        use_curriculum (bool, optional): Whether to use curriculum learning. Defaults to True.
+        n_runs (int, optional): Number of independent training runs to perform. Defaults to 10.
+        total_timesteps (int, optional): Total number of timesteps for each training run. Defaults to 1,000,000.
+        time_limit (int, optional): Time limit per episode (used in the TimeLimit wrapper). Defaults to TIME_LIMIT.
+        base_path (str, optional): Base directory where training outputs (models, logs) will be saved. Defaults to "../../runs/".
+        her_params (dict, optional): Parameters for Hindsight Experience Replay (only applicable if `algo == 'her'`).
+        curriculum_threshold (float, optional): Reward threshold to advance difficulty in curriculum learning. Defaults to 35.
         seed (int, optional): Random seed for reproducibility. Defaults to 0.
 
     Returns:
-        model: The trained RL model instance.
+        None
+
+    Side Effects:
+        - Saves trained models, replay buffers, and logs under the specified `base_path`.
+        - Resumes training from the latest checkpoint if available.
+        - Uses callbacks for checkpointing, evaluation, and optional curriculum adjustment.
 
     Notes:
-        - Saves the model at `model_path` after training.
-        - Uses multiple callbacks for checkpointing, evaluation, and curriculum learning.
-        - Supports HER-specific configuration when `algo` is set to "her".
+        - HER-specific configuration is only activated if `algo` is "her" and `her_params` is provided.
+        - The environment must support setting a reward function via the `rew_fun` argument.
+        - Automatically restores training state from checkpoints, including model weights, replay buffer, and curriculum difficulty.
     """
+
     # ENVIRONMENT
     env = env_creator(rew_fun=rew_fun)
     env = TimeLimit(env, time_limit)
@@ -140,7 +143,9 @@ def train(
         if checkpoint_file:
             # Load model
             model_class = MODEL_MAP[algo]
-            model = model_class.load(checkpoint_file, env=env, tensorboard_log=str(run_path / "logs"))
+            model = model_class.load(
+                checkpoint_file, env=env, tensorboard_log=str(run_path / "logs")
+            )
 
             # Calculate remaining timesteps
             current_timesteps = model.num_timesteps
@@ -153,7 +158,9 @@ def train(
             print("Continuing training from", checkpoint_file)
 
             # Load replay buffer
-            replay_buffer_file = get_latest_checkpoint(run_path / "models", extension=".pkl")
+            replay_buffer_file = get_latest_checkpoint(
+                run_path / "models", extension=".pkl"
+            )
             if replay_buffer_file:
                 model.load_replay_buffer(replay_buffer_file)
 
@@ -200,10 +207,64 @@ def train(
 
         print(f"Run {n_run} is done!")
 
+
+def eval_all_trained_models(
+    algo: str,
+    use_curriculum: bool,
+    env_creator: Callable[[], gym.Env],
+    base_path: str = "../../runs/",
+    eval_path: str = "../../evaluations/",
+    n_eval_episodes: int = 10,
+    deterministic: bool = True,
+):
+    assert (
+        algo in MODEL_MAP
+    ), f"Unknown algo '{algo}' – must be one of {list(MODEL_MAP)}"
+
+    # Instantiate and wrap the env
+    env = env_creator(rew_fun="sparse" if algo == "her" else "shaped")
+    env = TimeLimit(env, TIME_LIMIT)
+
+    base_path = Path(base_path)
+    flag = "with" if use_curriculum else "without"
+    selected_path = base_path / f"{algo}_{flag}_curriculum"
+
+    for n_run, run_path in enumerate(os.listdir(selected_path)):
+        print(f"\n>> Evaluating run {n_run} of {algo} ({flag} curriculum)")
+
+        run_path = selected_path / run_path
+        model_path = get_latest_checkpoint(run_path / "models", extension=".zip")
+        if model_path is None:
+            print(f"Checkpoint not found {algo} {flag} curriculum")
+            return
+
+        # Choose and load the model
+        model_class = MODEL_MAP[algo]
+        model = model_class.load(model_path, env=env)
+
+        # Configure logger so we get CSV / Tensorboard / stdout in save_path
+        save_path = Path(eval_path) / f"{algo}_{flag}_curriculum"
+        os.makedirs(save_path, exist_ok=True)
+        new_logger = configure(str(save_path), ["stdout", "csv", "tensorboard"])
+        model.set_logger(new_logger)
+
+        eval_cb = BallerEvalCallback(
+            env,
+            eval_freq=1,
+            n_eval_episodes=n_eval_episodes,
+            deterministic=deterministic,
+        )
+        # manually bootstrap the callback
+        eval_cb.model = model
+        eval_cb.eval_env = model.get_env()
+        # a fake "step" to trigger evaluation immediately
+        eval_cb._on_step()
+
+
 if __name__ == "__main__":
     if TRAINING:
         if TRAIN_ALG == "ppo":
-            ppo_model = train(
+            train(
                 algo="ppo",
                 env_creator=lambda **kw: BallerSupervisor(**kw),
                 rew_fun="shaped",
@@ -215,7 +276,7 @@ if __name__ == "__main__":
                 curriculum_threshold=0.5,
             )
         elif TRAIN_ALG == "sac":
-            sac_model = train(
+            train(
                 algo="sac",
                 env_creator=lambda **kw: BallerSupervisor(**kw),
                 rew_fun="shaped",
@@ -227,7 +288,7 @@ if __name__ == "__main__":
                 curriculum_threshold=0.5,
             )
         elif TRAIN_ALG == "her":
-            her_model = train(
+            train(
                 algo="her",
                 env_creator=lambda **kw: HERBallerSupervisor(**kw),
                 rew_fun="sparse",
@@ -242,4 +303,16 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Invalid algorithm: {TRAIN_ALG}")
     else:
-        raise NotImplementedError("TODO: this")
+        eval_all_trained_models(
+            algo=TRAIN_ALG,
+            use_curriculum=USE_CURRICULUM,
+            env_creator=(
+                (lambda **kw: HERBallerSupervisor(**kw))
+                if TRAIN_ALG == "her"
+                else (lambda **kw: BallerSupervisor(**kw))
+            ),
+            base_path="../../runs/",
+            eval_path="../../evaluations/",
+            n_eval_episodes=10,
+            deterministic=True,
+        )
