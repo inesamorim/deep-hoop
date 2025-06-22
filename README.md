@@ -80,9 +80,9 @@ This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating system
 
 ### Training
 
-Run the `supervisor_controller.py` script directly from within PyCharm. Upon launch, it will automatically connect to a running Webots instance, just make sure Webots R2023B is open with the `puma560_new.wbt` world loaded and running.
+Run the `supervisor_controller.py` or `bulk_train.py` script directly from within PyCharm. Upon launch, it will automatically connect to a running Webots instance, just make sure Webots R2023B is open with the `puma560_new.wbt` world loaded and running.
 
-At the top of `supervisor_controller.py`, you can switch the training algorithm by setting the `TRAIN_ALG` variable (options: `ppo`, `sac`, or `her`).
+At the top of the script, you can switch the training algorithm by setting the `TRAIN_ALG` variable (options: `ppo`, `sac`, or `her`) and whether to use curriculum learning by setting `USE_CURRICULUM`.
 
 During training, checkpoints and logs are stored as follows:
 
@@ -93,7 +93,7 @@ During training, checkpoints and logs are stored as follows:
 
 1. **Disable Training Mode**
 
-At the top of `supervisor_controller.py`, set:
+At the top of `supervisor_controller.py` or `bulk_train.py`, set:
 
 ```python
 TRAINING = False
