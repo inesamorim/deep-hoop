@@ -36,6 +36,7 @@ def train(
     ],
     rew_fun: str,
     policy: str = "MlpPolicy",  # or "MultiInputPolicy"
+    use_curriculum: bool = True,
     total_timesteps: int = 1_000_000,
     time_limit: int = TIME_LIMIT,
     model_path: str = "./models/baller_latest.zip",
@@ -53,6 +54,7 @@ def train(
         env_creator (Callable[[], gym.Env]): A function that returns an instance of a Gym environment.
         rew_fun (str): Identifier for the reward function used by the environment.
         policy (str, optional): Policy type to use (e.g., "MlpPolicy", "MultiInputPolicy"). Defaults to "MlpPolicy".
+        use_curriculum (bool, optional): Whether to use curriculum learning or not
         total_timesteps (int, optional): Total number of timesteps for training. Defaults to 1,000,000.
         time_limit (int, optional): Maximum number of steps per episode (used in TimeLimit wrapper). Defaults to TIME_LIMIT.
         model_path (str, optional): Path to save or load the model. Defaults to "./models/baller_latest.zip".
@@ -83,18 +85,21 @@ def train(
         best_model_save_path="./models/best_" + algo,
         log_path="./logs/" + algo,
         eval_freq=10_000,
-        n_eval_episodes=5,
+        n_eval_episodes=10,
         deterministic=True,
     )
-    curr_cb = CurriculumCallback(
-        env,
-        threshold=curriculum_threshold,
-        eval_freq=5_000,
-        max_difficulty=len(DIFFICULTIES),
-        starting_difficulty=0,
-        verbose=1,
-    )
-    callbacks = CallbackList([ckpt, eval_cb, curr_cb])
+    if use_curriculum:
+        curr_cb = CurriculumCallback(
+            env,
+            threshold=curriculum_threshold,
+            eval_freq=5_000,
+            max_difficulty=len(DIFFICULTIES),
+            starting_difficulty=0,
+            verbose=1,
+        )
+        callbacks = CallbackList([ckpt, eval_cb, curr_cb])
+    else:
+        callbacks = CallbackList([ckpt, eval_cb])
 
     # LOAD/INIT MODEL
     if continue_training and os.path.exists(model_path):
@@ -216,8 +221,8 @@ def find_model_path(base_dir: str) -> str:
 
 
 def run_all_trained_models():
-    for algo in ["her", "sac", "ppo"]:
-        for with_curr in (True, False):
+    for algo in ["her"]:
+        for with_curr in (False,):
             flag = "with" if with_curr else "without"
             model_dir = os.path.join(
                 "..", "..", "trained_models", f"{algo}_{flag}_curriculum"
@@ -262,7 +267,7 @@ if __name__ == "__main__":
                 rew_fun="shaped",
                 policy="MlpPolicy",
                 total_timesteps=1_000_000,
-                curriculum_threshold=35,
+                curriculum_threshold=0.5,
                 continue_training=CONTINUE_TRAINING,
             )
         elif TRAIN_ALG == "sac":
@@ -272,7 +277,7 @@ if __name__ == "__main__":
                 rew_fun="shaped",
                 policy="MlpPolicy",
                 total_timesteps=1_000_000,
-                curriculum_threshold=35,
+                curriculum_threshold=0.5,
                 continue_training=CONTINUE_TRAINING,
             )
         elif TRAIN_ALG == "her":
