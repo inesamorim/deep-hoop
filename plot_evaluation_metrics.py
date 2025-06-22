@@ -47,7 +47,7 @@ def load_scalar_all_files(event_files, tag):
     if not dfs:
         return None
 
-    combined = pd.concat(dfs, ignore_index=True).drop_duplicates(subset="step")
+    combined = pd.concat(dfs, ignore_index=True)
     combined = combined.sort_values("step")
     return combined.reset_index(drop=True)
 
@@ -60,37 +60,31 @@ def plot_dual_x_groups(
         group2_label: str,
         mean_tag: str,
         save_path: str,
-        std_tag=None,  # string, dict, or None
         smooth_window: int = 10,
         dpi: int = 300,
-        twin_y: bool = False  # NEW: Enable separate y-axes
+        twin_y: bool = False  # Enable separate y-axes
 ):
     """
-    Compare two groups of runs on a shared y-axis but separate x-axes.
+    Compare two groups of runs by computing mean and std across multiple runs.
 
     Parameters
     ----------
     base_log_path : str
-        Root folder containing all run subdirectories.
+        Root folder containing all group subdirectories.
     group1_runs : list[str]
-        Subdirectory names for the first algorithm.
+        Names of subdirectories for the first algorithm (each containing run_<i> subfolders).
     group2_runs : list[str]
-        Subdirectory names for the second algorithm.
+        Names of subdirectories for the second algorithm.
     group1_label : str
         Label for the bottom x-axis (e.g. "Timesteps (PPO)").
     group2_label : str
         Label for the top x-axis (e.g. "Timesteps (SAC)").
     mean_tag : str
         TensorBoard scalar tag to plot (e.g. "rollout/ep_rew_mean").
-    std_tag : str or dict or None
-        Scalar tag(s) for standard deviation:
-          • None → no shading
-          • single str → same tag for all runs
-          • dict → {run_name: tag_for_that_run}
+    save_path : str
+        Path to save the figure (PNG/PDF).
     smooth_window : int
         Rolling window size for smoothing.
-    save_path : str or None
-        If provided, path to save the figure (PNG/PDF).
     dpi : int
         Resolution for saving.
     twin_y : bool
@@ -101,67 +95,66 @@ def plot_dual_x_groups(
 
     # Create twin y-axis if requested
     if twin_y:
-        ax3 = ax2.twinx()  # ax3 shares x-axis with ax2 (top x-axis)
+        ax3 = ax2.twinx()
     else:
-        ax3 = ax2  # Use same axis
+        ax3 = ax2
 
-    def _get_std_tag(run):
-        if std_tag is None:
-            return None
-        if isinstance(std_tag, dict):
-            return std_tag.get(run)
-        return std_tag
-
-    def _plot_runs(ax_x, ax_y, runs, alg_label, axis_label):
-        nonlocal color_idx
-        ax_x.set_xlabel(axis_label, labelpad=8)
-
-        for run in runs:
-            path = os.path.join(base_log_path, run)
-            files = sorted(glob.glob(f"{path}/**/events.out.tfevents.*", recursive=True),
-                           key=os.path.getmtime)
-            if not files:
-                print(f"[!] no event files for {run}")
-                continue
-
-            df_mean = load_scalar_all_files(files, mean_tag)
-            if df_mean is None:
-                print(f"[!] '{mean_tag}' missing in {run}")
-                continue
-            df_mean["mean_smooth"] = (
-                df_mean["value"].rolling(smooth_window, min_periods=1).mean()
-            )
-
-            color = colors[color_idx % len(colors)]
-            ax_y.plot(df_mean["step"], df_mean["mean_smooth"],
-                      label=f"{alg_label} {' '.join(run.split('_')[1:])}", color=color)
-
-            tag_std = _get_std_tag(run)
-            if tag_std:
-                df_std = load_scalar_all_files(files, tag_std)
-                if df_std is not None:
-                    merged = pd.merge(df_mean, df_std, on="step",
-                                      suffixes=("", "_std"))
-                    merged["std_smooth"] = (
-                        merged["value_std"].rolling(smooth_window, min_periods=1).mean()
-                    )
-                    upper = merged["mean_smooth"] + merged["std_smooth"]
-                    lower = merged["mean_smooth"] - merged["std_smooth"]
-                    ax_y.fill_between(merged["step"], lower, upper,
-                                      alpha=0.2, color=color)
-            color_idx += 1
-
-    # Color cycle
     colors = plt.cm.tab10.colors
     color_idx = 0
 
-    # Plot group1 on bottom x-axis (ax1)
-    _plot_runs(ax1, ax1, group1_runs, group1_label, f"{group1_label} Timesteps")
-    # Plot group2 on top x-axis (ax2) with separate y-axis (ax3) if twin_y enabled
-    _plot_runs(ax2, ax3, group2_runs, group2_label, f"{group2_label} Timesteps")
+    def _plot_group(ax_x, ax_y, groups, label, axis_label):
+        nonlocal color_idx
+        ax_x.set_xlabel(axis_label, labelpad=8)
 
-    # Y-axis & title
-    metric_name = mean_tag.split('/')[1].replace('_', ' ').capitalize()
+        for group in groups:
+            # Collect each run's smoothed mean series
+            series_list = []
+            for run_dir in sorted(glob.glob(os.path.join(base_log_path, group.lower(), 'run_*'))):
+                # Find TensorBoard event file(s)
+                event_files = glob.glob(os.path.join(run_dir, 'logs', '*', 'events.out.tfevents.*'))
+                if not event_files:
+                    print(f"[!] No event files for {run_dir}")
+                    continue
+
+                df = load_scalar_all_files(sorted(event_files), mean_tag)
+                if df is None:
+                    print(f"[!] '{mean_tag}' missing in {run_dir}")
+                    continue
+
+                # Smooth values
+                df['mean_smooth'] = df['value'].rolling(smooth_window, min_periods=1).mean()
+                series_list.append(df.set_index('step')['mean_smooth'].rename(os.path.basename(run_dir)))
+
+            if not series_list:
+                print(f"[!] No run files for {groups}")
+                continue
+
+            # Someone didn't reset the logs inês
+            # Some indices are duplicated, this can happen if training is restarted without resetting the logs
+            # hacky fix: keep the last
+            series_list = [s[~s.index.duplicated(keep="last")] for s in series_list]
+
+            # Combine all runs
+            df_all = pd.concat(series_list, axis=1)
+            df_mean = df_all.mean(axis=1)
+            df_std = df_all.std(axis=1)
+
+            color = colors[color_idx % len(colors)]
+            ax_y.plot(df_mean.index, df_mean.values,
+                      label=f"{' '.join(group.split('_'))}", color=color)
+            ax_y.fill_between(df_mean.index,
+                              df_mean.values - df_std.values,
+                              df_mean.values + df_std.values,
+                              alpha=0.2, color=color)
+            color_idx += 1
+
+    # Plot group1 on bottom x-axis (ax1)
+    _plot_group(ax1, ax1, group1_runs, group1_label, f"{group1_label} Timesteps")
+    # Plot group2 on top x-axis (ax2) with separate y-axis (ax3) if twin_y enabled
+    _plot_group(ax2, ax3, group2_runs, group2_label, f"{group2_label} Timesteps")
+
+    # Axis labels and title
+    metric_name = mean_tag.split('/')[-1].replace('_', ' ').capitalize()
     if twin_y:
         ax1.set_ylabel(f"{group1_label} {metric_name}")
         ax3.set_ylabel(f"{group2_label} {metric_name}")
@@ -176,19 +169,18 @@ def plot_dual_x_groups(
     ax1.legend(h1 + h2, l1 + l2, loc="best")
 
     plt.tight_layout()
-    print(f"[✓] Plot saved to: {save_path}")
+
+    # Save
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(save_path, dpi=dpi)
-
+    print(f"[✓] Plot saved to: {save_path}")
 
 def plot_eval_bar_groups(
     eval_root: str,
     group1: list[str],
     group2: list[str] = None,
     metric_tag1: str = "eval/success_rate",
-    std_tag1: str = None,
     metric_tag2: str = None,
-    std_tag2: str = None,
     title: str = "Evaluation Metrics",
     twin_y: bool = False,
     label1: str = "Group 1",
@@ -198,40 +190,34 @@ def plot_eval_bar_groups(
     save_path: str = None,
     dpi: int = 300
 ):
-    def get_stats(configs, tag, std_tag):
-        labels, means, stds = [], [], []
-        for cfg in configs:
-            folder = os.path.join(eval_root, cfg)
-            event_files = sorted(glob.glob(os.path.join(folder, "**/events.out.tfevents.*"), recursive=True))
-            if not event_files:
-                print(f"[!] No TB files in {folder}")
-                continue
-
-            mean_df = load_scalar_all_files(event_files, tag)
-            if mean_df is None or mean_df.empty:
-                print(f"[!] No values for '{tag}' in {cfg}")
-                continue
-
-            mean_val = mean_df["value"].mean()
-            std_val = 0.0
-            if std_tag:
-                std_df = load_scalar_all_files(event_files, std_tag)
-                if std_df is not None and not std_df.empty:
-                    std_val = std_df["value"].mean()
-
-            labels.append(cfg.replace("_", " "))
-            means.append(mean_val)
-            stds.append(std_val)
+    def compute_group_stats(group_dirs, metric_tag):
+        means, stds, labels = [], [], []
+        for cfg in group_dirs:
+            group_path = os.path.join(eval_root, cfg)
+            event_files = sorted(glob.glob(os.path.join(group_path, "events.out.tfevents.*")))
+            run_means = []
+            for event_file in event_files:
+                df = load_scalar_all_files([event_file], metric_tag)
+                if df is None or df.empty:
+                    print(f"[!] No values for '{metric_tag}' in {event_file}")
+                    continue
+                val = df["value"].mean()
+                run_means.append(val)
+            if run_means:
+                labels.append(cfg.replace("_", " "))
+                means.append(np.mean(run_means))
+                stds.append(np.std(run_means))
+            else:
+                print(f"[!] No valid runs for {cfg}")
         return labels, means, stds
 
     if group2 is None:
         group2 = []
 
     metric_tag2 = metric_tag2 or metric_tag1
-    std_tag2 = std_tag2 or std_tag1
 
-    labels1, means1, stds1 = get_stats(group1, metric_tag1, std_tag1)
-    labels2, means2, stds2 = get_stats(group2, metric_tag2, std_tag2)
+    labels1, means1, stds1 = compute_group_stats(group1, metric_tag1)
+    labels2, means2, stds2 = compute_group_stats(group2, metric_tag2)
 
     if not labels1 and not labels2:
         print("[!] No valid data to plot.")
@@ -241,7 +227,7 @@ def plot_eval_bar_groups(
     x2 = np.arange(len(labels1), len(labels1) + len(labels2))
 
     fig, ax1 = plt.subplots(figsize=(12, 6))
-    ax1.bar(x1, means1, yerr=stds1 if std_tag1 else None, capsize=6,
+    ax1.bar(x1, means1, yerr=stds1, capsize=6,
             color=color1, edgecolor="black", alpha=0.9, label=label1)
     ax1.set_xticks(np.concatenate([x1, x2]))
     ax1.set_xticklabels(labels1 + labels2)
@@ -250,12 +236,13 @@ def plot_eval_bar_groups(
 
     if twin_y and labels2:
         ax2 = ax1.twinx()
-        ax2.bar(x2, means2, yerr=stds2 if std_tag2 else None, capsize=6,
+        ax2.bar(x2, means2, yerr=stds2, capsize=6,
                 color=color2, edgecolor="black", alpha=0.9, label=label2)
         ax2.set_ylabel(metric_tag2.split("/")[-1].replace("_", " ").capitalize(), color=color2)
         ax2.tick_params(axis="y", colors=color2)
+        ax2.set_ylim(bottom=0)
     elif not twin_y and labels2:
-        ax1.bar(x2, means2, yerr=stds2 if std_tag2 else None, capsize=6,
+        ax1.bar(x2, means2, yerr=stds2, capsize=6,
                 color=color2, edgecolor="black", alpha=0.9, label=label2)
 
     ax1.set_title(title)
@@ -267,11 +254,6 @@ def plot_eval_bar_groups(
         plt.savefig(save_path, dpi=dpi)
         print(f"[✓] Saved to {save_path}")
 
-
-base_path = "./controllers/supervisor_controller/logs/paper"
-ppo_runs = ["PPO_with_curriculum", "PPO_without_curriculum"]
-sac_runs = ["SAC_with_curriculum", "SAC_without_curriculum"]
-her_runs = ["HER_with_curriculum", "HER_without_curriculum"]
 
 eval_metrics = [
     ("avg_ball_velocity", "std_ball_velocity", False),
@@ -286,30 +268,34 @@ eval_metrics = [
 
 for metric, std, twin in eval_metrics:
     plot_eval_bar_groups(
-        eval_root="./controllers/supervisor_controller/evaluation/",
+        eval_root="./evaluations/",
         group1=["ppo_with_curriculum", "ppo_without_curriculum", "sac_with_curriculum", "sac_without_curriculum"],
         group2=["her_with_curriculum", "her_without_curriculum"],
         metric_tag1=f"eval/{metric}",
-        std_tag1=f"eval/{std}" if std is not None else None,
         title=f"{metric.replace('_', ' ').capitalize()} of different models",
         color1="royalblue",
         color2="crimson" if twin else "royalblue",
         save_path=f"figs/trained/{metric}.png",
         twin_y=twin,
     )
+    
 
 train_metrics = [
     ("eval/avg_ball_velocity", "eval/std_ball_velocity", False),
     ("eval/avg_distance", "eval/std_distance", False),
-    # ("eval/avg_joint_usage", "eval/std_joint_usage", False),  # pedro messed up this one during training :P
+    ("eval/avg_joint_usage", "eval/std_joint_usage", False),
     ("eval/avg_throw_duration", "eval/std_throw_duration", False),
     ("eval/mean_ep_length", None, False),
     ("eval/mean_reward", None, True),
     ("eval/success_rate", None, False),
-    # ("eval/avg_max_height", "eval/std_max_height", False),
+    ("eval/avg_max_height", "eval/std_max_height", False),
     ("rollout/ep_rew_mean", None, True),
     ("rollout/ep_len_mean", None, False),
 ]
+
+ppo_runs = ["PPO_with_curriculum", "PPO_without_curriculum"]
+sac_runs = ["SAC_with_curriculum", "SAC_without_curriculum"]
+her_runs = ["HER_with_curriculum", "HER_without_curriculum"]
 
 all_combinations = product(
     combinations(
@@ -321,13 +307,13 @@ all_combinations = product(
 
 for ((tag1, run1), (tag2, run2)), (metric, std, twin_y) in tqdm(all_combinations):
     plot_dual_x_groups(
-        base_path,
+        "./runs",
         run1,
         run2,
         group1_label=tag1,
         group2_label=tag2,
         mean_tag=metric,
-        std_tag=std,
-        save_path=f"figs/{metric.split('/')[-1]}/{tag1}_vs_{tag2}.png",
+        save_path=f"figs/training/{metric.split('/')[-1]}/{tag1}_vs_{tag2}.png",
         twin_y=twin_y,
+        smooth_window=1,
     )
