@@ -33,8 +33,8 @@ DIFFICULTIES = [
     # Medium
     Difficulty(
         hoop_pos=gym.spaces.Box(
-            low=np.array([-0.3, 2, 1.7]),
-            high=np.array([0.3, 2.4, 1.8]),
+            low=np.array([-2, 2, 1.7]),
+            high=np.array([2, 4, 2.0]),
             dtype=np.float32,
         ),
         hoop_size=gym.spaces.Box(
@@ -44,15 +44,27 @@ DIFFICULTIES = [
         ),
     ),
     # Hard
+    # Difficulty(
+    #     hoop_pos=gym.spaces.Box(
+    #         low=np.array([-4, 1, 1.8]),
+    #         high=np.array([4, 6, 2.6]),
+    #         dtype=np.float32,
+    #     ),
+    #     hoop_size=gym.spaces.Box(
+    #         low=np.array([0.45]),
+    #         high=np.array([0.45]),
+    #         dtype=np.float32,
+    #     ),
+    # ),
     Difficulty(
         hoop_pos=gym.spaces.Box(
-            low=np.array([-1, 2, 1.8]),
-            high=np.array([1, 3.5, 2]),
+            low=np.array([-3, 1.75, 1.8]),
+            high=np.array([3, 4.5, 2.6]),
             dtype=np.float32,
         ),
         hoop_size=gym.spaces.Box(
-            low=np.array([0.45]),
-            high=np.array([0.45]),
+            low=np.array([0.3]),
+            high=np.array([0.3]),
             dtype=np.float32,
         ),
     ),

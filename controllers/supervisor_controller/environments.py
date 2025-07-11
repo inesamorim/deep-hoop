@@ -13,10 +13,10 @@ HAND_SENSOR_NAMES = [f"finger_{i}_joint_1_sensor" for i in [1, 2, "middle"]]
 
 # Range of values for each action
 ACTION_SCALE = [
-    (-4, 4),
-    (-4, 0),
-    (-4, 0),
-    (-4, 0),
+    (-5, 5),
+    (-5, 0),
+    (-5, 0),
+    (-5, 0),
 ]
 
 
@@ -44,7 +44,7 @@ def rew_shaped(
     # Success boost
     passed_hoop = is_ball_passing(ball_pos, hoop_pos, passing_radius)
 
-    reward = 0.5 * r_vel + r_time + 20 * passed_hoop
+    reward = 0.5 * r_vel + r_time + 30 * passed_hoop
     return reward
 
 
@@ -307,11 +307,9 @@ class BallerSupervisor(RobotSupervisorEnv):
         if super(Supervisor, self).step(self.timestep) == -1:
             exit()
 
-        # Get the outer radius (distance from center to tube middle)
-        outer_radius = self.hoop.getField("majorRadius").getSFFloat()
         # Get the inner radius (tube thickness)
         inner_radius = self.hoop.getField("minorRadius").getSFFloat()
-        self.passing_radius = outer_radius - inner_radius
+        self.passing_radius = new_radius[0] - inner_radius
 
         return obs
 
