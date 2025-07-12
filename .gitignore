@@ -1,4 +1,11 @@
 .venv
 .idea
+controllers/supervisor_controller/evaluation
 controllers/supervisor_controller/models
 controllers/supervisor_controller/logs
+__pycache__
+trained_models
+figs
+evaluations
+vids
+runs
