@@ -272,7 +272,7 @@ if __name__ == "__main__":
                 n_runs=10,
                 total_timesteps=1_000_000,
                 base_path=f"../../runs/ppo_{'with' if USE_CURRICULUM else 'without'}_curriculum",
-                curriculum_threshold=0.5,
+                curriculum_threshold=0.75,
             )
         elif TRAIN_ALG == "sac":
             train(
@@ -284,7 +284,7 @@ if __name__ == "__main__":
                 n_runs=10,
                 total_timesteps=100_000,
                 base_path=f"../../runs/sac_{'with' if USE_CURRICULUM else 'without'}_curriculum",
-                curriculum_threshold=0.5,
+                curriculum_threshold=0.75,
             )
         elif TRAIN_ALG == "her":
             train(
@@ -296,7 +296,7 @@ if __name__ == "__main__":
                 n_runs=10,
                 total_timesteps=400_000,
                 base_path=f"../../runs/her_{'with' if USE_CURRICULUM else 'without'}_curriculum",
-                curriculum_threshold=0.5,
+                curriculum_threshold=0.75,
                 her_params={"n_sampled_goal": 4, "goal_selection_strategy": "final"},
             )
         else:

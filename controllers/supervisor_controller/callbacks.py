@@ -33,41 +33,64 @@ DIFFICULTIES = [
     # Medium
     Difficulty(
         hoop_pos=gym.spaces.Box(
-            low=np.array([-2, 2, 1.7]),
-            high=np.array([2, 4, 2.0]),
+            low=np.array([-1, 2, 1.7]),
+            high=np.array([1, 4, 2.0]),
             dtype=np.float32,
         ),
         hoop_size=gym.spaces.Box(
-            low=np.array([0.5]),
+            low=np.array([0.6]),
+            high=np.array([0.7]),
+            dtype=np.float32,
+        ),
+    ),
+    Difficulty(
+        hoop_pos=gym.spaces.Box(
+            low=np.array([-1, 2, 1.7]),
+            high=np.array([1, 4, 2.0]),
+            dtype=np.float32,
+        ),
+        hoop_size=gym.spaces.Box(
+            low=np.array([0.4]),
             high=np.array([0.6]),
             dtype=np.float32,
         ),
     ),
-    # Hard
-    # Difficulty(
-    #     hoop_pos=gym.spaces.Box(
-    #         low=np.array([-4, 1, 1.8]),
-    #         high=np.array([4, 6, 2.6]),
-    #         dtype=np.float32,
-    #     ),
-    #     hoop_size=gym.spaces.Box(
-    #         low=np.array([0.45]),
-    #         high=np.array([0.45]),
-    #         dtype=np.float32,
-    #     ),
-    # ),
     Difficulty(
         hoop_pos=gym.spaces.Box(
-            low=np.array([-3, 1.75, 1.8]),
-            high=np.array([3, 4.5, 2.6]),
+            low=np.array([-1, 2, 1.7]),
+            high=np.array([1, 4, 2.0]),
             dtype=np.float32,
         ),
         hoop_size=gym.spaces.Box(
             low=np.array([0.3]),
+            high=np.array([0.4]),
+            dtype=np.float32,
+        ),
+    ),
+    Difficulty(
+        hoop_pos=gym.spaces.Box(
+            low=np.array([-1, 2, 1.7]),
+            high=np.array([1, 4, 2.0]),
+            dtype=np.float32,
+        ),
+        hoop_size=gym.spaces.Box(
+            low=np.array([0.2]),
             high=np.array([0.3]),
             dtype=np.float32,
         ),
     ),
+    # Difficulty(
+    #     hoop_pos=gym.spaces.Box(
+    #         low=np.array([-1, 2, 1.7]),
+    #         high=np.array([1, 4, 2.0]),
+    #         dtype=np.float32,
+    #     ),
+    #     hoop_size=gym.spaces.Box(
+    #         low=np.array([0.1]),
+    #         high=np.array([0.2]),
+    #         dtype=np.float32,
+    #     ),
+    # ),
 ]
 
 
@@ -124,6 +147,7 @@ class CurriculumCallback(BaseCallback):
                     # Log difficulty change
                     print(f"Increasing difficulty to {self.current_difficulty}")
                 self.logger.record("curriculum/difficulty", self.current_difficulty)
+                self.logger.dump(self.num_timesteps)  # Write to disk
 
                 log_dir = self.logger.dir or "./"
                 log_file = os.path.join(log_dir, "curriculum.txt")

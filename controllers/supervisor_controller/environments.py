@@ -44,7 +44,7 @@ def rew_shaped(
     # Success boost
     passed_hoop = is_ball_passing(ball_pos, hoop_pos, passing_radius)
 
-    reward = 0.5 * r_vel + r_time + 30 * passed_hoop
+    reward = 0.25 * r_vel + r_time + 45 * passed_hoop
     return reward
 
 
