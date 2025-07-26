@@ -38,6 +38,21 @@
 
 This setup enables systematic training (with checkpoints & TensorBoard), curriculum progression, and post-training evaluation at varying difficulty levels.
 
+The following table lists the core software packages and versions used in this work:
+
+### Software Packages
+
+| **Package**         | **Version** |
+|---------------------|-------------|
+| Webots              | R2023b      |
+| Python              | 3.10.12     |
+| deepbots            | 1.0.0       |
+| stable-baselines3   | 2.6.0       |
+| numpy               | 2.2.3       |
+| torch               | 2.6.0       |
+| gym                 | 0.21.0      |
+
+
 ## Installation
 
 This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating systems but newer version should also work.
@@ -45,7 +60,7 @@ This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating system
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/yourusername/webots-baller.git
+   git clone https://github.com/inesamorim/deep-hoop.git
    cd webots-baller
    ```
 
@@ -66,6 +81,27 @@ This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating system
    pip install -r requirements.txt
    ```
 
+## Environment Configuration
+
+The table below summarizes the initial coordinates and joint angles of the robot:
+
+### Initial Positions and Joint Angles
+
+| **Element**          | **Initial Position / Value**     |
+|----------------------|----------------------------------|
+| Robot base position  | (0.000, 0.000, 0.000)            |
+| Ball position        | (-0.059, -0.038, 0.770)          |
+| Hoop position        | Variable\*                       |
+| Joint 1 (Shoulder)   | 0.200 rad                        |
+| Joint 2 (Upperarm)   | -0.950 rad                       |
+| Joint 3 (Wrist2)     | 3.150 rad                        |
+| Gripper Joint 1      | 0.450 rad                        |
+| Gripper Joint 2      | 0.500 rad                        |
+| Gripper Joint 3      | 0.500 rad                        |
+
+Position values are in meters. Joint values are in radians.
+
+
 ## Usage
 
 ### Launch Webots & Supervisor Controller
@@ -80,39 +116,68 @@ This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating system
 
 ### Training
 
-Run the `supervisor_controller.py` or `bulk_train.py` script directly from within PyCharm. Upon launch, it will automatically connect to a running Webots instance, just make sure Webots R2023B is open with the `puma560_new.wbt` world loaded and running.
+You have two options depending on whether you want to train a single model or run batch experiments:
 
-At the top of the script, you can switch the training algorithm by setting the `TRAIN_ALG` variable (options: `ppo`, `sac`, or `her`) and whether to use curriculum learning by setting `USE_CURRICULUM`.
+#### 🔹 `supervisor_controller.py`
 
-During training, checkpoints and logs are stored as follows:
+* Best suited for **training a single model**.
+* Simple to configure and launch.
+* Edit the script to set:
 
-* **Models:** Saved every 50,000 steps to `./models/` with filenames formatted as `mode_<n>_steps.zip`.
-* **TensorBoard logs:** Written to `./logs/`, in subdirectories named after each run (e.g., `ppo_<run id>`).
+  * `TRAIN_ALG = 'ppo'` (options: `ppo`, `sac`, `her`)
+  * `USE_CURRICULUM = True/False`
+
+#### 🔹 `bulk_train.py`
+
+* Recommended if you want to **train multiple models** with different settings (e.g., different algorithms, seeds, curriculum).
+* Automatically manages multiple runs and directories.
+
+> Ensure Webots is open and running the `puma560_new.wbt` world before launching either script.
+
+Checkpoints and logs:
+
+* **Model checkpoints and logs**: Saved to `./runs/` one subfolder per run
+
 
 ### Evaluation
 
 1. **Disable Training Mode**
 
-At the top of `supervisor_controller.py` or `bulk_train.py`, set:
+In either script, set:
 
 ```python
 TRAINING = False
 ```
 
-2. **Place Your Trained Model**
+2. **Run the evaluation script**
 
-Copy your trained model into the `./trained_models/` directory.
+Execute `supervisor_controller.py` or `bulk_train.py` again. It will run multiple test episodes using your policy.
 
-3. **Run the Script**
+3. **Review the Results**
 
-Launch `supervisor_controller.py` from your IDE (PyCharm will auto-connect to Webots)
+Evaluation metrics are logged to:
 
-This will run evaluation episodes using your saved policy.
+```
+./evaluation/<algo>_<with|without>_curriculum/
+```
 
-4. **Review the Results**
+Output is available as CSV files and TensorBoard logs.
 
-* **Evaluation metrics** (per-episode success rate, distances, etc.) are logged to `./evaluation/<algo>_<with|without>_curriculum/` as CSV and TensorBoard event files.
+---
 
+## Results
+
+### Evaluation Plots
+
+<div align="center">
+  <img src="./figs/trained/mean_reward.png" alt="Mean Cumulative Reward" width="100%" />
+</div>
+
+<div align="center">
+  <img src="./figs/trained/success_rate.png" alt="Success Rate Over 100 Episodes" width="100%" />
+</div>
+
+---
 
 ## Demo
 
