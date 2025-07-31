@@ -83,7 +83,7 @@ This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating system
 
 ## Environment Configuration
 
-The table below summarizes the initial coordinates and joint angles of the robot:
+The initial configuration of the environment is defined by the spatial coordinates of key objects and the angular positions of the robot’s joints. The table below summarizes the initial positions of the robot base, ball, and hoop in three-dimensional space (x, y, z), as well as the initial one-dimensional joint angles for the arm and gripper. While position values are expressed in meters, joint values are given in radians and correspond to angular displacements around each joint's rotation axis.
 
 ### Initial Positions and Joint Angles
 
