@@ -124,7 +124,7 @@ Position values are in meters. Joint values are in radians.
 
 ### HER
 
-- **Goal sampling**: Final-state relabeling strategy ($n_{\text{sampled\_goal}}=4$)
+- **Goal sampling**: Final-state relabeling strategy (n\_sampled\_goal = 4)
 - **Replay buffer**: 1M transition capacity
 - **Exploration**: Ornstein-Uhlenbeck noise ($\sigma=0.1$)
 - **Training duration**: $10^7$ timesteps ($\approx1000$ episodes at $10^4$ steps/episode)
