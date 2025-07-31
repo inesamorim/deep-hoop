@@ -101,6 +101,26 @@ The initial configuration of the environment is defined by the spatial coordinat
 
 Position values are in meters. Joint values are in radians.
 
+## Algorithms Setup
+
+### PPO
+
+- **Policy updates**: Performed every 2048 environment steps
+- **Learning Rate**: $3 \times 10^{-4}$ (Adam optimizer)
+- **Clipping Parameters**: $\epsilon = 0.2$
+- **Generalized Advantage Estimation**: $\lambda = 0.95$, $\gamma = 0.99$
+- **Training**: 1 million total timesteps
+- **Network architecture**: Two hidden layers (64 units each) with ReLU activation
+
+### SAC
+
+- **Learning rate**: $3 \times 10^{-4}$ (Adam optimizer for both policy and critics)
+- **Batch size**: 256 (HER-compatible default)
+- **Target smoothing ($\tau$)**: 0.005
+- **Temperature ($\alpha$)**: Automatically tuned with initial value 0.2
+- **Target entropy**: $-\dim(\mathcal{A})$ (action space dimension)
+- **Training duration**: $10^7$ timesteps (consistent with HER implementation)
+- **Network architecture**: Twin Q-networks (256$\times$256) with ReLU
 
 ## Usage
 
