@@ -101,7 +101,7 @@ The initial configuration of the environment is defined by the spatial coordinat
 
 Position values are in meters. Joint values are in radians.
 
-## Algorithms Setup
+## Algorithms Implementation
 
 ### PPO
 
@@ -121,6 +121,13 @@ Position values are in meters. Joint values are in radians.
 - **Target entropy**: $-\dim(\mathcal{A})$ (action space dimension)
 - **Training duration**: $10^7$ timesteps (consistent with HER implementation)
 - **Network architecture**: Twin Q-networks (256$\times$256) with ReLU
+
+### HER
+
+- **Goal sampling**: Final-state relabeling strategy ($n_{\text{sampled\_goal}}=4$)
+- **Replay buffer**: 1M transition capacity
+- **Exploration**: Ornstein-Uhlenbeck noise ($\sigma=0.1$)
+- **Training duration**: $10^7$ timesteps ($\approx1000$ episodes at $10^4$ steps/episode)
 
 ## Usage
 
