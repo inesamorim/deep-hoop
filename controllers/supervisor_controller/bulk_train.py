@@ -24,6 +24,7 @@ from controllers.supervisor_controller.environments import (
 TRAINING = True
 TRAIN_ALG = "ppo"
 USE_CURRICULUM = True
+REWARD = "shaped"
 
 # Constants
 TIME_LIMIT = 1_000
@@ -266,36 +267,36 @@ if __name__ == "__main__":
             train(
                 algo="ppo",
                 env_creator=lambda **kw: BallerSupervisor(**kw),
-                rew_fun="shaped",
+                rew_fun=REWARD,
                 policy="MlpPolicy",
                 use_curriculum=USE_CURRICULUM,
                 n_runs=10,
                 total_timesteps=1_000_000,
-                base_path=f"../../runs/ppo_{'with' if USE_CURRICULUM else 'without'}_curriculum",
+                base_path=f"../../runs/ppo_{'with' if USE_CURRICULUM else 'without'}_curriculum_{REWARD}",
                 curriculum_threshold=0.75,
             )
         elif TRAIN_ALG == "sac":
             train(
                 algo="sac",
                 env_creator=lambda **kw: BallerSupervisor(**kw),
-                rew_fun="shaped",
+                rew_fun=REWARD,
                 policy="MlpPolicy",
                 use_curriculum=USE_CURRICULUM,
                 n_runs=10,
                 total_timesteps=100_000,
-                base_path=f"../../runs/sac_{'with' if USE_CURRICULUM else 'without'}_curriculum",
+                base_path=f"../../runs/sac_{'with' if USE_CURRICULUM else 'without'}_curriculum_{REWARD}",
                 curriculum_threshold=0.75,
             )
         elif TRAIN_ALG == "her":
             train(
                 algo="her",
                 env_creator=lambda **kw: HERBallerSupervisor(**kw),
-                rew_fun="sparse",
+                rew_fun=REWARD,
                 policy="MultiInputPolicy",
                 use_curriculum=USE_CURRICULUM,
                 n_runs=10,
                 total_timesteps=400_000,
-                base_path=f"../../runs/her_{'with' if USE_CURRICULUM else 'without'}_curriculum",
+                base_path=f"../../runs/her_{'with' if USE_CURRICULUM else 'without'}_curriculum_{REWARD}",
                 curriculum_threshold=0.75,
                 her_params={"n_sampled_goal": 4, "goal_selection_strategy": "final"},
             )
