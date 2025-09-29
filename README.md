@@ -83,7 +83,7 @@ This project is compatible with Linux 20.04.6 LTS (Focal Fossa) operating system
 
 ## Environment Configuration
 
-The table below summarizes the initial coordinates and joint angles of the robot:
+The initial configuration of the environment is defined by the spatial coordinates of key objects and the angular positions of the robot’s joints. The table below summarizes the initial positions of the robot base, ball, and hoop in three-dimensional space (x, y, z), as well as the initial one-dimensional joint angles for the arm and gripper. While position values are expressed in meters, joint values are given in radians and correspond to angular displacements around each joint's rotation axis.
 
 ### Initial Positions and Joint Angles
 
@@ -101,6 +101,33 @@ The table below summarizes the initial coordinates and joint angles of the robot
 
 Position values are in meters. Joint values are in radians.
 
+## Algorithms Implementation
+
+### PPO
+
+- **Policy updates**: Performed every 2048 environment steps
+- **Learning Rate**: $3 \times 10^{-4}$ (Adam optimizer)
+- **Clipping Parameters**: $\epsilon = 0.2$
+- **Generalized Advantage Estimation**: $\lambda = 0.95$, $\gamma = 0.99$
+- **Training**: 1 million total timesteps
+- **Network architecture**: Two hidden layers (64 units each) with ReLU activation
+
+### SAC
+
+- **Learning rate**: $3 \times 10^{-4}$ (Adam optimizer for both policy and critics)
+- **Batch size**: 256 (HER-compatible default)
+- **Target smoothing ($\tau$)**: 0.005
+- **Temperature ($\alpha$)**: Automatically tuned with initial value 0.2
+- **Target entropy**: $-\dim(\mathcal{A})$ (action space dimension)
+- **Training duration**: $10^7$ timesteps (consistent with HER implementation)
+- **Network architecture**: Twin Q-networks (256$\times$256) with ReLU
+
+### HER
+
+- **Goal sampling**: Final-state relabeling strategy (n\_sampled\_goal = 4)
+- **Replay buffer**: 1M transition capacity
+- **Exploration**: Ornstein-Uhlenbeck noise ($\sigma=0.1$)
+- **Training duration**: $10^7$ timesteps ($\approx1000$ episodes at $10^4$ steps/episode)
 
 ## Usage
 
